@@ -1,17 +1,29 @@
-use bytes::Bytes;
+use parking_lot::Mutex;
+
+use serde::{Deserialize, Serialize};
 
 /// A message which has been received by the queue.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     key: String,
-    value: Bytes,
+    value: Vec<u8>,
     timestamp: u64,
+}
+
+impl Message {
+    pub fn new(key: String, value: Vec<u8>) -> Self {
+        Self {
+            key,
+            value,
+            timestamp: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct BigPipe {
     /// Internal queue to hold ordered messages as they are received.
-    queue: Vec<Message>,
+    queue: Mutex<Vec<Message>>,
 }
 
 impl Default for BigPipe {
@@ -23,17 +35,17 @@ impl Default for BigPipe {
 impl BigPipe {
     pub fn new() -> Self {
         Self {
-            queue: Vec::with_capacity(100),
+            queue: Mutex::new(Vec::with_capacity(100)),
         }
     }
 
-    pub fn add_message(&mut self, message: Message) {
-        self.queue.push(message);
+    pub fn add_message(&self, message: Message) {
+        self.queue.lock().push(message);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn messages(&self) -> &[Message] {
-        &self.queue
+    pub fn messages(&self) -> Vec<Message> {
+        let guard = self.queue.lock();
+        guard.clone() // snapshot of messages at the time of call, not important for now.
     }
 }
 
@@ -43,7 +55,7 @@ mod tests {
 
     #[test]
     fn add_messages() {
-        let mut q = BigPipe::new();
+        let q = BigPipe::new();
 
         let msg_1 = Message {
             key: "hello".to_string(),

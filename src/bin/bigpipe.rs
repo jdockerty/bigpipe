@@ -7,7 +7,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use bigpipe::{BigPipe, Message};
+use bigpipe::{BigPipe, ClientMessage};
 use parking_lot::Mutex;
 
 #[derive(Parser)]
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.commands {
         Commands::Write { key, value, addr } => {
-            let message = Message::new(key, value.into());
+            let message = ClientMessage::new(key, value.into());
 
             let mut stream = TcpStream::connect(addr).unwrap();
 
@@ -65,8 +65,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             for stream in listener.incoming() {
                 let stream = stream.unwrap();
-                let message: Message = rmp_serde::from_read(stream).unwrap();
-                bigpipe.lock().add_message(message);
+                let message: ClientMessage = rmp_serde::from_read(stream).unwrap();
+                bigpipe.lock().add_message(
+                    message.into_server_message(chrono::Utc::now().timestamp_micros()),
+                );
             }
         }
     }

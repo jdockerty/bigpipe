@@ -65,6 +65,7 @@ impl BigPipe {
         }
     }
 
+    /// Get all messages.
     pub fn messages(&self) -> HashMap<String, Vec<Message>> {
         let guard = self.queue.lock();
         guard.clone()

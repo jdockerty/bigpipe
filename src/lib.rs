@@ -49,7 +49,7 @@ impl ServerMessage {
 pub struct BigPipe {
     /// Internal queue to hold ordered messages as they are received,
     /// partitioned by their key.
-    queue: Mutex<HashMap<String, Vec<ServerMessage>>>,
+    inner: Mutex<HashMap<String, Vec<ServerMessage>>>,
 }
 
 impl Default for BigPipe {
@@ -61,13 +61,13 @@ impl Default for BigPipe {
 impl BigPipe {
     pub fn new() -> Self {
         Self {
-            queue: Mutex::new(HashMap::with_capacity(100)),
+            inner: Mutex::new(HashMap::with_capacity(100)),
         }
     }
 
     /// Add a message.
     pub fn add_message(&mut self, message: ServerMessage) {
-        self.queue
+        self.inner
             .lock()
             .entry(message.key.clone())
             .and_modify(|messages| messages.push(message.clone()))
@@ -81,7 +81,7 @@ impl BigPipe {
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
     pub fn get_messages(&self, partition_key: &str) -> Option<Vec<ServerMessage>> {
-        self.queue
+        self.inner
             .lock()
             .get(partition_key)
             .map(|messages| messages.to_vec())
@@ -89,7 +89,7 @@ impl BigPipe {
 
     /// Get all messages.
     pub fn messages(&self) -> HashMap<String, Vec<ServerMessage>> {
-        let guard = self.queue.lock();
+        let guard = self.inner.lock();
         guard.clone()
     }
 }

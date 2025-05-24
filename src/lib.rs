@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -6,12 +7,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     key: String,
-    value: Vec<u8>,
+    value: Bytes,
     timestamp: u64,
 }
 
 impl Message {
-    pub fn new(key: String, value: Vec<u8>) -> Self {
+    pub fn new(key: String, value: Bytes) -> Self {
         Self {
             key,
             value,

@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.commands {
         Commands::Write { key, value, addr } => {
-            let message = Message::new(key, value.into_bytes());
+            let message = Message::new(key, value.into());
 
             let mut stream = TcpStream::connect(addr).unwrap();
 

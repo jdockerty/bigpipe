@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use hashbrown::HashMap;
 use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -23,8 +24,9 @@ impl Message {
 
 #[derive(Debug)]
 pub struct BigPipe {
-    /// Internal queue to hold ordered messages as they are received.
-    queue: Mutex<Vec<Message>>,
+    /// Internal queue to hold ordered messages as they are received,
+    /// partitioned by their key.
+    queue: Mutex<HashMap<String, Vec<Message>>>,
 }
 
 impl Default for BigPipe {
@@ -36,17 +38,25 @@ impl Default for BigPipe {
 impl BigPipe {
     pub fn new() -> Self {
         Self {
-            queue: Mutex::new(Vec::with_capacity(100)),
+            queue: Mutex::new(HashMap::with_capacity(100)),
         }
     }
 
-    pub fn add_message(&self, message: Message) {
-        self.queue.lock().push(message);
+    pub fn add_message(&mut self, message: Message) {
+        self.queue
+            .lock()
+            .entry(message.key.clone())
+            .and_modify(|messages| messages.push(message.clone()))
+            .or_insert_with(|| {
+                let mut messages = Vec::with_capacity(100);
+                messages.push(message);
+                messages
+            });
     }
 
-    pub fn messages(&self) -> Vec<Message> {
+    pub fn messages(&self) -> HashMap<String, Vec<Message>> {
         let guard = self.queue.lock();
-        guard.clone() // snapshot of messages at the time of call, not important for now.
+        guard.clone()
     }
 }
 
@@ -56,7 +66,7 @@ mod tests {
 
     #[test]
     fn add_messages() {
-        let q = BigPipe::new();
+        let mut q = BigPipe::new();
 
         let msg_1 = Message {
             key: "hello".to_string(),
@@ -75,8 +85,8 @@ mod tests {
         }
 
         let messages = q.messages();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0], msg_1);
-        assert_eq!(messages[1], msg_2);
+        assert_eq!(messages.keys().len(), 2);
+        assert_eq!(messages.get(&msg_1.key).unwrap()[0], msg_1);
+        assert_eq!(messages.get(&msg_2.key).unwrap()[0], msg_2);
     }
 }

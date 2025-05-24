@@ -8,6 +8,7 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use bigpipe::{BigPipe, Message};
+use parking_lot::Mutex;
 
 #[derive(Parser)]
 struct Cli {
@@ -50,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
         }
         Commands::Server { addr, debug } => {
-            let bigpipe = Arc::new(BigPipe::new());
+            let bigpipe = Arc::new(Mutex::new(BigPipe::new()));
 
             let listener = TcpListener::bind(addr).unwrap();
             println!("bigpipe running at {}", listener.local_addr().unwrap());
@@ -59,13 +60,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let bigpipe_background = Arc::clone(&bigpipe);
                 std::thread::spawn(move || loop {
                     std::thread::sleep(Duration::from_millis(500));
-                    println!("{:?}", bigpipe_background.messages());
+                    println!("{:?}", bigpipe_background.lock().messages());
                 });
             }
             for stream in listener.incoming() {
                 let stream = stream.unwrap();
                 let message: Message = rmp_serde::from_read(stream).unwrap();
-                bigpipe.add_message(message);
+                bigpipe.lock().add_message(message);
             }
         }
     }

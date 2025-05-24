@@ -42,6 +42,7 @@ impl BigPipe {
         }
     }
 
+    /// Add a message.
     pub fn add_message(&mut self, message: Message) {
         self.queue
             .lock()
@@ -52,6 +53,16 @@ impl BigPipe {
                 messages.push(message);
                 messages
             });
+    }
+
+    /// Get messages for a particular key, returning [`None`] if there are
+    /// no messages.
+    pub fn get_messages(&self, partition_key: &str) -> Option<Vec<Message>> {
+        if let Some(messages) = self.queue.lock().get(partition_key) {
+            Some(messages.to_vec())
+        } else {
+            None
+        }
     }
 
     pub fn messages(&self) -> HashMap<String, Vec<Message>> {
@@ -86,7 +97,8 @@ mod tests {
 
         let messages = q.messages();
         assert_eq!(messages.keys().len(), 2);
-        assert_eq!(messages.get(&msg_1.key).unwrap()[0], msg_1);
-        assert_eq!(messages.get(&msg_2.key).unwrap()[0], msg_2);
+        assert_eq!(q.get_messages(&msg_1.key).unwrap()[0], msg_1);
+        assert_eq!(q.get_messages(&msg_2.key).unwrap()[0], msg_2);
+        assert!(q.get_messages("key_doesnt_exist").is_none());
     }
 }

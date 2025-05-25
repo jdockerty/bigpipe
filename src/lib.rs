@@ -1,4 +1,8 @@
-use bytes::Bytes;
+mod wal;
+
+use std::io::{BufReader, Read, Write};
+
+use bytes::{Buf, Bytes};
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 
@@ -42,6 +46,24 @@ impl ServerMessage {
             value,
             timestamp,
         }
+    }
+}
+
+impl TryFrom<ServerMessage> for Vec<u8> {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(message: ServerMessage) -> Result<Self, Self::Error> {
+        let mut buf = Vec::with_capacity(1024);
+
+        buf.write_all(&message.key.len().to_le_bytes())?;
+        buf.write_all(message.key.as_bytes())?;
+
+        buf.write_all(&message.value.len().to_be_bytes())?;
+        buf.write_all(&message.value)?;
+
+        buf.write_all(&message.timestamp.to_be_bytes())?;
+
+        Ok(buf)
     }
 }
 

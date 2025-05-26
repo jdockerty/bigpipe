@@ -77,12 +77,14 @@ impl Segment {
             filepath: segment_path.clone(),
             file: File::create_new(segment_path).unwrap(),
             file_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE as usize),
+            current_size: 0,
             buf,
         }
     }
 
-    fn write(&mut self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+    fn write(&mut self, message: ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
         let message_bytes: Vec<u8> = message.try_into()?;
+        let size = message_bytes.len();
 
         self.buf.write_all(&message_bytes)?;
 
@@ -90,12 +92,14 @@ impl Segment {
             self.flush()?;
         }
 
-        Ok(self.file.write_all(&message_bytes)?)
+        Ok(size)
     }
 
     fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.file.write_all(&self.buf)?;
         self.file.sync_all()?;
+        self.current_size += self.buf.len();
+        self.buf.clear();
         Ok(())
     }
 
@@ -150,5 +154,42 @@ mod test {
             0,
             "Flushing WAL expected a non-zero file size after writing"
         );
+    }
+
+    #[test]
+    fn write_with_rotation() {
+        let dir = TempDir::new().unwrap();
+
+        let mut wal = Wal::new(dir.path().to_path_buf(), Some(64));
+
+        // Known size of the write
+        let server_msg_size = 34;
+
+        for _ in 0..=2 {
+            wal.write(ServerMessage {
+                key: "hello".to_string(),
+                value: "world".into(),
+                timestamp: 1,
+            })
+            .unwrap();
+            wal.flush().unwrap();
+        }
+
+        assert_eq!(wal.id, 1, "Expected rotation");
+
+        assert_eq!(
+            wal.active_segment.file.metadata().unwrap().len(),
+            server_msg_size,
+            "A single write should be in the new file"
+        );
+        assert_eq!(
+            std::fs::File::open(dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}")))
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .len(),
+            server_msg_size * 2,
+            "Two writes are expected to the old segment"
+        )
     }
 }

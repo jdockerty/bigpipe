@@ -31,7 +31,10 @@ impl Wal {
     }
 
     /// Write a message into the write-ahead log.
-    pub fn write(&mut self, message: ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn write(&mut self, message: ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
+        if self.active_segment.current_size >= self.active_segment.file_max_size {
+            self.rotate()?;
+        }
         Ok(self.active_segment.write(message)?)
     }
 
@@ -62,6 +65,7 @@ impl Wal {
 struct Segment {
     filepath: PathBuf,
     file: File,
+    current_size: usize,
     file_max_size: usize,
     buf: Vec<u8>,
 }

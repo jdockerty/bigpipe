@@ -40,6 +40,20 @@ impl Wal {
         Ok(self.active_segment.flush()?)
     }
 
+    /// Rotate the currently active WAL segment.
+    pub(crate) fn rotate(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Force a flush to ensure that no data is lost before rotation.
+        self.active_segment.flush()?;
+
+        self.id += 1;
+
+        self.active_segment = Segment::new(
+            self.directory.join(format!("{}{WAL_EXTENSION}", self.id)),
+            Some(self.active_segment.file_max_size),
+        );
+        Ok(())
+    }
+
     pub fn active_segment_path(&self) -> &Path {
         self.active_segment.path()
     }
@@ -97,13 +111,18 @@ mod test {
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
 
-        let wal = Wal::new(dir.path().to_path_buf(), None);
+        let mut wal = Wal::new(dir.path().to_path_buf(), None);
 
         let expected_path = dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}"));
         assert!(expected_path.exists());
         assert_eq!(wal.active_segment.path(), &expected_path);
+        assert_eq!(wal.id, 0);
 
-        // TODO: wal rotiation increases segment ID
+        wal.rotate().unwrap();
+        let expected_path = dir.path().join(format!("1{WAL_EXTENSION}"));
+        assert!(expected_path.exists());
+        assert_eq!(wal.active_segment.path(), &expected_path);
+        assert_eq!(wal.id, 1);
     }
 
     #[test]

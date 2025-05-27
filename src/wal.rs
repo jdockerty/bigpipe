@@ -33,7 +33,7 @@ impl Wal {
 
     /// Write a message into the write-ahead log.
     pub fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
-        if self.active_segment.current_size >= self.active_segment.file_max_size {
+        if self.active_segment.current_size >= self.active_segment.max_size {
             self.rotate()?;
         }
         self.active_segment.write(message)
@@ -53,7 +53,7 @@ impl Wal {
 
         self.active_segment = Segment::new(
             self.directory.join(format!("{}{WAL_EXTENSION}", self.id)),
-            Some(self.active_segment.file_max_size),
+            Some(self.active_segment.max_size),
         );
         Ok(())
     }
@@ -68,7 +68,7 @@ struct Segment {
     filepath: PathBuf,
     file: File,
     current_size: usize,
-    file_max_size: usize,
+    max_size: usize,
     buf: Vec<u8>,
 }
 
@@ -78,7 +78,7 @@ impl Segment {
         Self {
             filepath: segment_path.clone(),
             file: File::create_new(segment_path).unwrap(),
-            file_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
+            max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             current_size: 0,
             buf,
         }

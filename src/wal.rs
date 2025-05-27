@@ -39,6 +39,7 @@ impl Wal {
         self.active_segment.write(message)
     }
 
+    #[allow(dead_code)]
     /// Force flush the current active segment.
     pub(crate) fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.active_segment.flush()
@@ -58,6 +59,7 @@ impl Wal {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn active_segment_path(&self) -> &Path {
         self.active_segment.path()
     }
@@ -73,6 +75,7 @@ struct Segment {
 }
 
 impl Segment {
+    /// Construct a new [`Segment`].
     fn new(segment_path: PathBuf, segment_max_size: Option<usize>) -> Self {
         let buf = Vec::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize);
         Self {
@@ -84,6 +87,7 @@ impl Segment {
         }
     }
 
+    /// Perform a write into the [`Segment`], returning the number of bytes written.
     fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
         let message_bytes: Vec<u8> = message.try_into()?;
         let size = message_bytes.len();
@@ -97,6 +101,8 @@ impl Segment {
         Ok(size)
     }
 
+    /// Flush data for the [`Segment`] from the internal buffer to the underlying
+    /// file.
     fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.file.write_all(&self.buf)?;
         self.file.sync_all()?;

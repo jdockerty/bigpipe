@@ -10,6 +10,7 @@ const MAX_SEGMENT_BUFFER_SIZE: u16 = 8192; // 8 KiB
 const WAL_EXTENSION: &str = "-bp.wal";
 const WAL_DEFAULT_ID: u64 = 0;
 
+#[derive(Debug)]
 pub struct Wal {
     id: u64,
     active_segment: Segment,
@@ -31,16 +32,16 @@ impl Wal {
     }
 
     /// Write a message into the write-ahead log.
-    pub fn write(&mut self, message: ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
+    pub fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
         if self.active_segment.current_size >= self.active_segment.file_max_size {
             self.rotate()?;
         }
-        Ok(self.active_segment.write(message)?)
+        self.active_segment.write(message)
     }
 
     /// Force flush the current active segment.
     pub(crate) fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(self.active_segment.flush()?)
+        self.active_segment.flush()
     }
 
     /// Rotate the currently active WAL segment.
@@ -62,6 +63,7 @@ impl Wal {
     }
 }
 
+#[derive(Debug)]
 struct Segment {
     filepath: PathBuf,
     file: File,
@@ -76,13 +78,13 @@ impl Segment {
         Self {
             filepath: segment_path.clone(),
             file: File::create_new(segment_path).unwrap(),
-            file_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE as usize),
+            file_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             current_size: 0,
             buf,
         }
     }
 
-    fn write(&mut self, message: ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
+    fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
         let message_bytes: Vec<u8> = message.try_into()?;
         let size = message_bytes.len();
 
@@ -139,7 +141,7 @@ mod test {
 
         let mut wal = Wal::new(dir.path().to_path_buf(), None);
 
-        wal.write(ServerMessage {
+        wal.write(&ServerMessage {
             key: "hello".to_string(),
             value: "world".into(),
             timestamp: 1,
@@ -166,7 +168,7 @@ mod test {
         let server_msg_size = 34;
 
         for _ in 0..=2 {
-            wal.write(ServerMessage {
+            wal.write(&ServerMessage {
                 key: "hello".to_string(),
                 value: "world".into(),
                 timestamp: 1,

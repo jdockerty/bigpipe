@@ -1,12 +1,13 @@
 mod wal;
 
-use std::io::{BufReader, Read, Write};
+use std::{io::Write, path::PathBuf};
 
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
+use wal::Wal;
 
 /// A message sent by a client.
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,10 +50,10 @@ impl ServerMessage {
     }
 }
 
-impl TryFrom<ServerMessage> for Vec<u8> {
+impl TryFrom<&ServerMessage> for Vec<u8> {
     type Error = Box<dyn std::error::Error>;
 
-    fn try_from(message: ServerMessage) -> Result<Self, Self::Error> {
+    fn try_from(message: &ServerMessage) -> Result<Self, Self::Error> {
         let mut buf = Vec::with_capacity(1024);
 
         buf.write_all(&message.key.len().to_le_bytes())?;
@@ -72,18 +73,15 @@ pub struct BigPipe {
     /// Internal queue to hold ordered messages as they are received,
     /// partitioned by their key.
     inner: Mutex<HashMap<String, Vec<ServerMessage>>>,
-}
-
-impl Default for BigPipe {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Write ahead log to ensure durability of writes.
+    wal: Wal,
 }
 
 impl BigPipe {
-    pub fn new() -> Self {
+    pub fn new(wal_directory: PathBuf, wal_max_segment_size: Option<usize>) -> Self {
         Self {
             inner: Mutex::new(HashMap::with_capacity(100)),
+            wal: Wal::new(wal_directory, wal_max_segment_size),
         }
     }
 
@@ -114,15 +112,24 @@ impl BigPipe {
         let guard = self.inner.lock();
         guard.clone()
     }
+
+    /// Write to the underlying WAL.
+    pub fn wal_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+        self.wal.write(message)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use crate::{BigPipe, ClientMessage, ServerMessage};
 
     #[test]
     fn add_messages() {
-        let mut q = BigPipe::new();
+        let wal_dir = TempDir::new().unwrap();
+        let mut q = BigPipe::new(wal_dir.path().to_path_buf(), None);
 
         let msg_1 = ServerMessage::new(
             "hello".to_string(),

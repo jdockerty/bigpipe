@@ -7,6 +7,7 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 use wal::Wal;
 
 /// A message sent by a client.
@@ -29,6 +30,16 @@ impl ClientMessage {
             value: self.value,
             timestamp,
         }
+    }
+
+    /// Get a reference to the underlying key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Get a reference to the underlying value.
+    pub fn value(&self) -> &[u8] {
+        &self.value
     }
 }
 
@@ -90,8 +101,12 @@ impl BigPipe {
         self.inner
             .lock()
             .entry(message.key.clone())
-            .and_modify(|messages| messages.push(message.clone()))
+            .and_modify(|messages| {
+                debug!(key = message.key, "updating");
+                messages.push(message.clone())
+            })
             .or_insert_with(|| {
+                debug!(key = message.key, "new key");
                 let mut messages = Vec::with_capacity(100);
                 messages.push(message);
                 messages

@@ -5,6 +5,9 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use clap_verbosity_flag::{InfoLevel, Verbosity};
+use tracing::{debug, info};
+use tracing_subscriber;
 
 use bigpipe::{BigPipe, ClientMessage, ServerMessage};
 
@@ -37,6 +40,9 @@ enum Commands {
         /// Max size of a segment for the WAL.
         #[arg(long, env = "BIGPIPE_WAL_SEGMENT_MAX_SIZE")]
         wal_segment_max_size: Option<usize>,
+
+        #[command(flatten)]
+        verbosity: Verbosity<InfoLevel>,
     },
 }
 
@@ -57,15 +63,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             addr,
             wal_directory,
             wal_segment_max_size,
+            verbosity,
         } => {
-            let mut bigpipe = BigPipe::new(wal_directory, wal_segment_max_size);
+            tracing_subscriber::fmt().with_max_level(verbosity).init();
+            let mut bigpipe = BigPipe::new(wal_directory.clone(), wal_segment_max_size);
 
             let listener = TcpListener::bind(addr).unwrap();
-            println!("bigpipe running at {}", listener.local_addr().unwrap());
+            info!(address = %listener.local_addr().unwrap(), wal_directory = %wal_directory.to_string_lossy(), "bigpipe running");
 
             for stream in listener.incoming() {
                 let stream = stream.unwrap();
                 let message: ClientMessage = rmp_serde::from_read(stream).unwrap();
+
+                debug!(
+                    key = message.key(),
+                    value_size = message.value().len(),
+                    "received client message"
+                );
 
                 let timestamp = chrono::Utc::now().timestamp_micros();
                 let server_msg: ServerMessage = message.into_server_message(timestamp);

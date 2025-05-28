@@ -5,6 +5,8 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use tracing::info;
+use tracing_subscriber;
 
 use bigpipe::{BigPipe, ClientMessage, ServerMessage};
 
@@ -58,10 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             wal_directory,
             wal_segment_max_size,
         } => {
-            let mut bigpipe = BigPipe::new(wal_directory, wal_segment_max_size);
+            tracing_subscriber::fmt().init();
+            let mut bigpipe = BigPipe::new(wal_directory.clone(), wal_segment_max_size);
 
             let listener = TcpListener::bind(addr).unwrap();
-            println!("bigpipe running at {}", listener.local_addr().unwrap());
+            info!(address = %listener.local_addr().unwrap(), wal_directory = %wal_directory.to_string_lossy(), "bigpipe running");
 
             for stream in listener.incoming() {
                 let stream = stream.unwrap();

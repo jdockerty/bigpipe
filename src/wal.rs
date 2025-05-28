@@ -2,6 +2,8 @@ use std::convert::TryInto;
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
+use tracing::{debug, info};
+
 use crate::ServerMessage;
 
 pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB
@@ -50,12 +52,21 @@ impl Wal {
         // Force a flush to ensure that no data is lost before rotation.
         self.active_segment.flush()?;
 
+        let current_id = self.id;
         self.id += 1;
+        let next_id = self.id;
+        let next_path = self.directory.join(format!("{}{WAL_EXTENSION}", self.id));
 
-        self.active_segment = Segment::new(
-            self.directory.join(format!("{}{WAL_EXTENSION}", self.id)),
-            Some(self.active_segment.max_size),
+        info!(
+            current_id,
+            next_id,
+            next_path = %next_path.to_string_lossy(),
+            current_size = self.active_segment.current_size,
+            max_size = self.active_segment.max_size,
+            "rotating wal segment"
         );
+
+        self.active_segment = Segment::new(next_path, Some(self.active_segment.max_size));
         Ok(())
     }
 
@@ -104,6 +115,7 @@ impl Segment {
     /// Flush data for the [`Segment`] from the internal buffer to the underlying
     /// file.
     fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("flushing internal segment buffer");
         self.file.write_all(&self.buf)?;
         self.file.sync_all()?;
         self.current_size += self.buf.len();

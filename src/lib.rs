@@ -127,7 +127,7 @@ pub struct BigPipe {
 impl BigPipe {
     pub fn new(wal_directory: PathBuf, wal_max_segment_size: Option<usize>) -> Self {
         let (segment_id, inner) = Wal::replay(&wal_directory);
-        let wal = Wal::new(segment_id, wal_directory, wal_max_segment_size).unwrap();
+        let wal = Wal::new(segment_id, wal_directory, wal_max_segment_size);
 
         let inner = Mutex::new(inner);
         Self { inner, wal }

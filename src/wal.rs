@@ -23,19 +23,15 @@ pub struct Wal {
 }
 
 impl Wal {
-    pub fn new(
-        id: u64,
-        directory: PathBuf,
-        segment_max_size: Option<usize>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self {
+    pub fn new(id: u64, directory: PathBuf, segment_max_size: Option<usize>) -> Self {
+        Self {
             id,
             directory: directory.clone(),
             active_segment: Segment::new(
                 directory.join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}")),
                 segment_max_size,
             ),
-        })
+        }
     }
 
     pub fn replay<P: AsRef<Path>>(directory: P) -> (u64, HashMap<String, Vec<ServerMessage>>) {
@@ -201,7 +197,7 @@ mod test {
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
+        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None);
 
         let expected_path = dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}"));
         assert!(expected_path.exists());
@@ -219,7 +215,7 @@ mod test {
     fn write() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
+        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None);
 
         wal.write(&ServerMessage {
             key: "hello".to_string(),
@@ -242,7 +238,7 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64)).unwrap();
+        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64));
 
         // Known size of the write
         let server_msg_size = 34;
@@ -284,8 +280,7 @@ mod test {
             WAL_DEFAULT_ID,
             dir.path().to_path_buf(),
             Some(TINY_SEGMENT_SIZE),
-        )
-        .unwrap();
+        );
 
         for i in 0..100 {
             let msg = ServerMessage {

@@ -1,6 +1,9 @@
 mod wal;
 
-use std::{io::Write, path::PathBuf};
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 use bytes::Bytes;
 use hashbrown::HashMap;
@@ -67,7 +70,7 @@ impl TryFrom<&ServerMessage> for Vec<u8> {
     fn try_from(message: &ServerMessage) -> Result<Self, Self::Error> {
         let mut buf = Vec::with_capacity(1024);
 
-        buf.write_all(&message.key.len().to_le_bytes())?;
+        buf.write_all(&message.key.len().to_be_bytes())?;
         buf.write_all(message.key.as_bytes())?;
 
         buf.write_all(&message.value.len().to_be_bytes())?;
@@ -76,6 +79,39 @@ impl TryFrom<&ServerMessage> for Vec<u8> {
         buf.write_all(&message.timestamp.to_be_bytes())?;
 
         Ok(buf)
+    }
+}
+
+impl TryFrom<&mut dyn Read> for ServerMessage {
+    type Error = std::io::Error;
+    fn try_from(reader: &mut dyn Read) -> Result<Self, Self::Error> {
+        // Key
+        let mut key_len_buf = [0u8; size_of::<usize>()];
+        reader.read_exact(&mut key_len_buf)?;
+        let key_len = usize::from_be_bytes(key_len_buf);
+
+        let mut key_buf = vec![0u8; key_len];
+        reader.read_exact(&mut key_buf)?;
+        let key = String::from_utf8(key_buf).expect("must be utf8");
+
+        // Value
+        let mut val_len_buf = [0u8; size_of::<usize>()];
+        reader.read_exact(&mut val_len_buf)?;
+        let val_len = usize::from_be_bytes(val_len_buf);
+
+        let mut value = vec![0u8; val_len];
+        reader.read_exact(&mut value)?;
+
+        // Timestamp
+        let mut timestamp_buf = [0u8; 8];
+        reader.read_exact(&mut timestamp_buf)?;
+        let timestamp = i64::from_be_bytes(timestamp_buf);
+
+        Ok(ServerMessage {
+            key,
+            value: value.into(),
+            timestamp,
+        })
     }
 }
 

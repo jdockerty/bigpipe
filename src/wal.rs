@@ -201,7 +201,7 @@ mod test {
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(dir.path().to_path_buf(), None);
+        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
         let expected_path = dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}"));
         assert!(expected_path.exists());
@@ -219,7 +219,7 @@ mod test {
     fn write() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(dir.path().to_path_buf(), None);
+        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
         wal.write(&ServerMessage {
             key: "hello".to_string(),
@@ -242,7 +242,7 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(dir.path().to_path_buf(), Some(64));
+        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64)).unwrap();
 
         // Known size of the write
         let server_msg_size = 34;
@@ -277,13 +277,15 @@ mod test {
 
     #[test]
     fn replay() {
-        tracing_subscriber::fmt()
-            .with_max_level(LevelFilter::DEBUG)
-            .init();
         let dir = TempDir::new().unwrap();
 
         const TINY_SEGMENT_SIZE: usize = 64;
-        let mut wal = Wal::new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
+        let mut wal = Wal::new(
+            WAL_DEFAULT_ID,
+            dir.path().to_path_buf(),
+            Some(TINY_SEGMENT_SIZE),
+        )
+        .unwrap();
 
         for i in 0..100 {
             let msg = ServerMessage {
@@ -301,7 +303,7 @@ mod test {
         assert_eq!(messages.keys().len(), 1);
 
         let contained_messages = messages.get("hello").unwrap();
-        assert_eq!(contained_messages.len(), 99);
+        assert_eq!(contained_messages.len(), 100);
         for i in 0..100 {
             assert_eq!(
                 contained_messages[i],

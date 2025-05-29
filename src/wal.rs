@@ -299,9 +299,9 @@ mod test {
 
         let contained_messages = messages.get("hello").unwrap();
         assert_eq!(contained_messages.len(), 100);
-        for i in 0..100 {
+        for (i, msg) in contained_messages.iter().enumerate().take(100) {
             assert_eq!(
-                contained_messages[i],
+                *msg,
                 ServerMessage {
                     key: "hello".to_string(),
                     value: "world".into(),

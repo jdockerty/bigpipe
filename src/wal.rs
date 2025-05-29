@@ -1,8 +1,11 @@
 use std::convert::TryInto;
+use std::io::{BufReader, Read};
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
+use hashbrown::HashMap;
 use tracing::{debug, info};
+use walkdir::{DirEntry, WalkDir};
 
 use crate::ServerMessage;
 
@@ -20,17 +23,64 @@ pub struct Wal {
 }
 
 impl Wal {
-    pub fn new(directory: PathBuf, segment_max_size: Option<usize>) -> Self {
-        // TODO: detect pre-existing segments, for now it always
-        // starts at 0.
-        Self {
-            id: WAL_DEFAULT_ID,
+    pub fn new(
+        id: u64,
+        directory: PathBuf,
+        segment_max_size: Option<usize>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            id,
             directory: directory.clone(),
             active_segment: Segment::new(
                 directory.join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}")),
                 segment_max_size,
             ),
+        })
+    }
+
+    pub fn replay<P: AsRef<Path>>(directory: P) -> (u64, HashMap<String, Vec<ServerMessage>>) {
+        let mut messages = HashMap::with_capacity(1000);
+        let mut highest_segment_id: u64 = 0;
+        for entry in WalkDir::new(directory)
+            .max_depth(1) // current directory only
+            .sort_by_key(parse_segment_id)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().to_string_lossy().contains(WAL_EXTENSION))
+        {
+            let segment_id = parse_segment_id(&entry);
+
+            if segment_id >= highest_segment_id {
+                highest_segment_id = segment_id;
+            }
+
+            let segment_file = std::fs::File::open(entry.path()).unwrap();
+            let mut reader = BufReader::new(segment_file);
+            loop {
+                match ServerMessage::try_from(&mut reader as &mut dyn Read) {
+                    Ok(msg) => {
+                        messages
+                            .entry(msg.key.clone())
+                            .and_modify(|occupied_messages: &mut Vec<ServerMessage>| {
+                                occupied_messages.push(msg.clone())
+                            })
+                            .or_insert_with(|| {
+                                let mut messages = Vec::with_capacity(100);
+                                messages.push(msg);
+                                messages
+                            });
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(e) => panic!("{e}"),
+                }
+            }
         }
+
+        if highest_segment_id == 0 {
+            highest_segment_id = WAL_DEFAULT_ID;
+        }
+
+        (highest_segment_id, messages)
     }
 
     /// Write a message into the write-ahead log.
@@ -55,7 +105,7 @@ impl Wal {
         let current_id = self.id;
         self.id += 1;
         let next_id = self.id;
-        let next_path = self.directory.join(format!("{}{WAL_EXTENSION}", self.id));
+        let next_path = self.directory.join(format!("{}{WAL_EXTENSION}", next_id));
 
         info!(
             current_id,
@@ -74,6 +124,18 @@ impl Wal {
     pub fn active_segment_path(&self) -> &Path {
         self.active_segment.path()
     }
+}
+
+fn parse_segment_id(entry: &DirEntry) -> u64 {
+    entry
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .strip_suffix(WAL_EXTENSION)
+        .expect("Only WAL files are returned by the filter")
+        .parse::<u64>()
+        .unwrap()
 }
 
 #[derive(Debug)]
@@ -211,5 +273,44 @@ mod test {
             server_msg_size * 2,
             "Two writes are expected to the old segment"
         )
+    }
+
+    #[test]
+    fn replay() {
+        tracing_subscriber::fmt()
+            .with_max_level(LevelFilter::DEBUG)
+            .init();
+        let dir = TempDir::new().unwrap();
+
+        const TINY_SEGMENT_SIZE: usize = 64;
+        let mut wal = Wal::new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
+
+        for i in 0..100 {
+            let msg = ServerMessage {
+                key: "hello".to_string(),
+                value: "world".into(),
+                timestamp: i,
+            };
+            wal.write(&msg).unwrap();
+            wal.active_segment.flush().unwrap();
+        }
+        wal.flush().unwrap();
+
+        let (last_segment_id, messages) = Wal::replay(dir.path());
+        assert_eq!(last_segment_id, 49);
+        assert_eq!(messages.keys().len(), 1);
+
+        let contained_messages = messages.get("hello").unwrap();
+        assert_eq!(contained_messages.len(), 99);
+        for i in 0..100 {
+            assert_eq!(
+                contained_messages[i],
+                ServerMessage {
+                    key: "hello".to_string(),
+                    value: "world".into(),
+                    timestamp: i as i64,
+                }
+            );
+        }
     }
 }

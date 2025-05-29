@@ -295,7 +295,7 @@ mod test {
 
         let (last_segment_id, messages) = Wal::replay(dir.path());
         assert_eq!(last_segment_id, 49);
-        assert_eq!(messages.keys().len(), 1);
+        assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
 
         let contained_messages = messages.get("hello").unwrap();
         assert_eq!(contained_messages.len(), 100);

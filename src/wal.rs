@@ -36,7 +36,7 @@ impl Wal {
 
     pub fn replay<P: AsRef<Path>>(directory: P) -> (u64, HashMap<String, Vec<ServerMessage>>) {
         let mut messages = HashMap::with_capacity(1000);
-        let mut highest_segment_id: u64 = 0;
+        let mut highest_segment_id: u64 = WAL_DEFAULT_ID;
         for entry in WalkDir::new(directory)
             .max_depth(1) // current directory only
             .sort_by_key(parse_segment_id)
@@ -72,7 +72,7 @@ impl Wal {
             }
         }
 
-        if highest_segment_id == 0 {
+        if highest_segment_id == WAL_DEFAULT_ID {
             highest_segment_id = WAL_DEFAULT_ID;
         }
 

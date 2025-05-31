@@ -41,20 +41,27 @@ impl Wal {
     pub fn replay<P: AsRef<Path>>(directory: P) -> (u64, HashMap<String, Vec<ServerMessage>>) {
         let mut messages = HashMap::with_capacity(1000);
         let mut highest_segment_id: u64 = WAL_DEFAULT_ID;
+        let mut segment_paths = Vec::new();
+
         for entry in WalkDir::new(directory)
             .max_depth(1) // current directory only
-            .sort_by_key(parse_segment_id)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().to_string_lossy().contains(WAL_EXTENSION))
         {
             let segment_id = parse_segment_id(&entry);
-
             if segment_id >= highest_segment_id {
                 highest_segment_id = segment_id;
             }
+            segment_paths.push((segment_id, entry.path().to_path_buf()));
+        }
 
-            let segment_file = std::fs::File::open(entry.path()).unwrap();
+        // Ensure that the paths are replayed in the order they were
+        // written.
+        segment_paths.sort_by_key(|(id, _)| *id);
+
+        for (_, path) in segment_paths {
+            let segment_file = std::fs::File::open(path).unwrap();
             let mut reader = BufReader::new(segment_file);
             loop {
                 match ServerMessage::try_from(&mut reader as &mut dyn Read) {
@@ -127,6 +134,7 @@ impl Wal {
 }
 
 fn parse_segment_id(entry: &DirEntry) -> u64 {
+    debug!(?entry);
     entry
         .path()
         .file_name()

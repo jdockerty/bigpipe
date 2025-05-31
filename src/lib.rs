@@ -130,7 +130,7 @@ impl BigPipe {
         wal_max_segment_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (last_segment_id, inner) = Wal::replay(&wal_directory);
-        let wal = Wal::try_new(last_segment_id + 1, wal_directory, wal_max_segment_size)?;
+        let wal = Wal::try_new(last_segment_id, wal_directory, wal_max_segment_size)?;
 
         let inner = Mutex::new(inner);
         Ok(Self { inner, wal })

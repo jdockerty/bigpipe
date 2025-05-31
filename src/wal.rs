@@ -317,5 +317,25 @@ mod test {
                 }
             );
         }
+
+        assert!(
+            Wal::try_new(
+                last_segment_id,
+                dir.path().to_path_buf(),
+                Some(TINY_SEGMENT_SIZE),
+            )
+            .is_err(),
+            "Creating segment with same ID is not allowed"
+        );
+
+        assert!(
+            Wal::try_new(
+                last_segment_id + 1,
+                dir.path().to_path_buf(),
+                Some(TINY_SEGMENT_SIZE),
+            )
+            .is_ok(),
+            "Segment should be +1 from last"
+        );
     }
 }

@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             verbosity,
         } => {
             tracing_subscriber::fmt().with_max_level(verbosity).init();
-            let mut bigpipe = BigPipe::new(wal_directory.clone(), wal_segment_max_size);
+            let mut bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size)?;
 
             let listener = TcpListener::bind(addr).unwrap();
             info!(address = %listener.local_addr().unwrap(), wal_directory = %wal_directory.to_string_lossy(), "bigpipe running");

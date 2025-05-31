@@ -23,15 +23,19 @@ pub struct Wal {
 }
 
 impl Wal {
-    pub fn new(id: u64, directory: PathBuf, segment_max_size: Option<usize>) -> Self {
-        Self {
+    pub fn try_new(
+        id: u64,
+        directory: PathBuf,
+        segment_max_size: Option<usize>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
             id,
             directory: directory.clone(),
-            active_segment: Segment::new(
-                directory.join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}")),
+            active_segment: Segment::try_new(
+                directory.join(format!("{id}{WAL_EXTENSION}")),
                 segment_max_size,
-            ),
-        }
+            )?,
+        })
     }
 
     pub fn replay<P: AsRef<Path>>(directory: P) -> (u64, HashMap<String, Vec<ServerMessage>>) {
@@ -112,7 +116,7 @@ impl Wal {
             "rotating wal segment"
         );
 
-        self.active_segment = Segment::new(next_path, Some(self.active_segment.max_size));
+        self.active_segment = Segment::try_new(next_path, Some(self.active_segment.max_size))?;
         Ok(())
     }
 
@@ -145,15 +149,18 @@ struct Segment {
 
 impl Segment {
     /// Construct a new [`Segment`].
-    fn new(segment_path: PathBuf, segment_max_size: Option<usize>) -> Self {
+    fn try_new(
+        segment_path: PathBuf,
+        segment_max_size: Option<usize>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let buf = Vec::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize);
-        Self {
+        Ok(Self {
             filepath: segment_path.clone(),
-            file: File::create_new(segment_path).unwrap(),
+            file: File::create_new(segment_path)?,
             max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             current_size: 0,
             buf,
-        }
+        })
     }
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
@@ -197,7 +204,7 @@ mod test {
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None);
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
         let expected_path = dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}"));
         assert!(expected_path.exists());
@@ -215,7 +222,7 @@ mod test {
     fn write() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None);
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
         wal.write(&ServerMessage {
             key: "hello".to_string(),
@@ -238,7 +245,7 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64));
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64)).unwrap();
 
         // Known size of the write
         let server_msg_size = 34;
@@ -276,11 +283,12 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         const TINY_SEGMENT_SIZE: usize = 64;
-        let mut wal = Wal::new(
+        let mut wal = Wal::try_new(
             WAL_DEFAULT_ID,
             dir.path().to_path_buf(),
             Some(TINY_SEGMENT_SIZE),
-        );
+        )
+        .unwrap();
 
         for i in 0..100 {
             let msg = ServerMessage {

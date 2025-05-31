@@ -125,12 +125,15 @@ pub struct BigPipe {
 }
 
 impl BigPipe {
-    pub fn new(wal_directory: PathBuf, wal_max_segment_size: Option<usize>) -> Self {
+    pub fn try_new(
+        wal_directory: PathBuf,
+        wal_max_segment_size: Option<usize>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let (segment_id, inner) = Wal::replay(&wal_directory);
-        let wal = Wal::new(segment_id, wal_directory, wal_max_segment_size);
+        let wal = Wal::try_new(segment_id, wal_directory, wal_max_segment_size)?;
 
         let inner = Mutex::new(inner);
-        Self { inner, wal }
+        Ok(Self { inner, wal })
     }
 
     /// Add a message.
@@ -181,7 +184,7 @@ mod tests {
     #[test]
     fn add_messages() {
         let wal_dir = TempDir::new().unwrap();
-        let mut q = BigPipe::new(wal_dir.path().to_path_buf(), None);
+        let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap();
 
         let msg_1 = ServerMessage::new(
             "hello".to_string(),

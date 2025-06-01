@@ -6,7 +6,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use bigpipe::{BigPipe, ClientMessage, ServerMessage};
 
@@ -71,8 +71,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!(address = %listener.local_addr().unwrap(), wal_directory = %wal_directory.to_string_lossy(), "bigpipe running");
 
             for stream in listener.incoming() {
-                let stream = stream.unwrap();
-                let message: ClientMessage = rmp_serde::from_read(stream).unwrap();
+                let stream = stream?;
+                let message: ClientMessage = match rmp_serde::from_read(&stream) {
+                    Ok(message) => message,
+                    Err(e) => {
+                        let peer = stream.peer_addr()?;
+                        error!(%peer, ?e);
+                        continue;
+                    }
+                };
 
                 debug!(
                     key = message.key(),

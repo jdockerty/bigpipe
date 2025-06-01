@@ -82,8 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let timestamp = chrono::Utc::now().timestamp_micros();
                 let server_msg: ServerMessage = message.into_server_message(timestamp);
-                bigpipe.wal_write(&server_msg)?;
-                bigpipe.add_message(server_msg);
+                bigpipe.write(&server_msg)?;
             }
         }
     }

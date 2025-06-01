@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tracing::debug;
-use wal::Wal;
+use wal::{Wal, WAL_DEFAULT_ID};
 
 /// A message sent by a client.
 #[derive(Debug, Serialize, Deserialize)]
@@ -235,5 +235,36 @@ mod tests {
                 timestamp
             }
         )
+    }
+
+    #[test]
+    fn wal_replay() {
+        let dir = TempDir::new().unwrap();
+        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+
+        bigpipe
+            .write(&ServerMessage {
+                key: "hello".to_string(),
+                value: "world".into(),
+                timestamp: 1,
+            })
+            .unwrap();
+        bigpipe.wal.flush().unwrap();
+        drop(bigpipe); // drop to demonstrate replay capability
+
+        let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+
+        let messages = bigpipe.get_messages("hello").unwrap();
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(
+            message,
+            &ServerMessage {
+                key: "hello".to_string(),
+                value: "world".into(),
+                timestamp: 1,
+            },
+            "Expected previous message being available from replay"
+        );
     }
 }

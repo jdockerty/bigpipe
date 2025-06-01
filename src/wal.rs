@@ -13,7 +13,7 @@ pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB
 const MAX_SEGMENT_BUFFER_SIZE: u16 = 8192; // 8 KiB
 
 const WAL_EXTENSION: &str = "-bp.wal";
-const WAL_DEFAULT_ID: u64 = 0;
+pub(crate) const WAL_DEFAULT_ID: u64 = 0;
 
 #[derive(Debug)]
 pub struct Wal {
@@ -38,8 +38,9 @@ impl Wal {
         })
     }
 
-    pub fn replay<P: AsRef<Path>>(directory: P) -> (u64, HashMap<String, Vec<ServerMessage>>) {
-        let mut messages = HashMap::with_capacity(1000);
+    pub fn replay<P: AsRef<Path>>(
+        directory: P,
+    ) -> Option<(u64, HashMap<String, Vec<ServerMessage>>)> {
         let mut highest_segment_id: u64 = WAL_DEFAULT_ID;
         let mut segment_paths = Vec::new();
 
@@ -56,10 +57,15 @@ impl Wal {
             segment_paths.push((segment_id, entry.path().to_path_buf()));
         }
 
+        if segment_paths.is_empty() {
+            return None;
+        }
+
         // Ensure that the paths are replayed in the order they were
         // written.
         segment_paths.sort_by_key(|(id, _)| *id);
 
+        let mut messages = HashMap::with_capacity(1000);
         for (_, path) in segment_paths {
             let segment_file = std::fs::File::open(path).unwrap();
             let mut reader = BufReader::new(segment_file);
@@ -83,11 +89,7 @@ impl Wal {
             }
         }
 
-        if highest_segment_id == WAL_DEFAULT_ID {
-            highest_segment_id = WAL_DEFAULT_ID;
-        }
-
-        (highest_segment_id, messages)
+        Some((highest_segment_id, messages))
     }
 
     /// Write a message into the write-ahead log.
@@ -309,7 +311,7 @@ mod test {
         }
         wal.flush().unwrap();
 
-        let (last_segment_id, messages) = Wal::replay(dir.path());
+        let (last_segment_id, messages) = Wal::replay(dir.path()).unwrap();
         assert_eq!(last_segment_id, 49);
         assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
 

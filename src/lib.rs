@@ -129,15 +129,27 @@ impl BigPipe {
         wal_directory: PathBuf,
         wal_max_segment_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let (last_segment_id, inner) = Wal::replay(&wal_directory);
-        let wal = Wal::try_new(last_segment_id, wal_directory, wal_max_segment_size)?;
-
-        let inner = Mutex::new(inner);
-        Ok(Self { inner, wal })
+        if let Some((last_segment_id, inner)) = Wal::replay(&wal_directory) {
+            let wal = Wal::try_new(last_segment_id + 1, wal_directory, wal_max_segment_size)?;
+            let inner = Mutex::new(inner);
+            Ok(Self { inner, wal })
+        } else {
+            Ok(Self {
+                inner: Mutex::new(HashMap::with_capacity(100)),
+                wal: Wal::try_new(WAL_DEFAULT_ID, wal_directory, wal_max_segment_size)?,
+            })
+        }
     }
 
-    /// Add a message.
-    pub fn add_message(&mut self, message: ServerMessage) {
+    /// Write a message.
+    pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+        self.wal_write(message)?;
+        self.add_message(message);
+        Ok(())
+    }
+
+    /// Add a message to the internal structure.
+    fn add_message(&mut self, message: &ServerMessage) {
         self.inner
             .lock()
             .entry(message.key.clone())
@@ -148,7 +160,7 @@ impl BigPipe {
             .or_insert_with(|| {
                 debug!(key = message.key, "new key");
                 let mut messages = Vec::with_capacity(100);
-                messages.push(message);
+                messages.push(message.clone());
                 messages
             });
     }
@@ -199,7 +211,7 @@ mod tests {
         );
 
         for msg in [msg_1.clone(), msg_2.clone()] {
-            q.add_message(msg);
+            q.add_message(&msg);
         }
 
         let messages = q.messages();

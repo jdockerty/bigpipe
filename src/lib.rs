@@ -1,6 +1,9 @@
 mod wal;
 
-use std::{io::Write, path::PathBuf};
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 use bytes::Bytes;
 use hashbrown::HashMap;
@@ -8,7 +11,7 @@ use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tracing::debug;
-use wal::Wal;
+use wal::{Wal, WAL_DEFAULT_ID};
 
 /// A message sent by a client.
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,7 +70,7 @@ impl TryFrom<&ServerMessage> for Vec<u8> {
     fn try_from(message: &ServerMessage) -> Result<Self, Self::Error> {
         let mut buf = Vec::with_capacity(1024);
 
-        buf.write_all(&message.key.len().to_le_bytes())?;
+        buf.write_all(&message.key.len().to_be_bytes())?;
         buf.write_all(message.key.as_bytes())?;
 
         buf.write_all(&message.value.len().to_be_bytes())?;
@@ -76,6 +79,39 @@ impl TryFrom<&ServerMessage> for Vec<u8> {
         buf.write_all(&message.timestamp.to_be_bytes())?;
 
         Ok(buf)
+    }
+}
+
+impl TryFrom<&mut dyn Read> for ServerMessage {
+    type Error = std::io::Error;
+    fn try_from(reader: &mut dyn Read) -> Result<Self, Self::Error> {
+        // Key
+        let mut key_len_buf = [0u8; size_of::<usize>()];
+        reader.read_exact(&mut key_len_buf)?;
+        let key_len = usize::from_be_bytes(key_len_buf);
+
+        let mut key_buf = vec![0u8; key_len];
+        reader.read_exact(&mut key_buf)?;
+        let key = String::from_utf8(key_buf).expect("must be utf8");
+
+        // Value
+        let mut val_len_buf = [0u8; size_of::<usize>()];
+        reader.read_exact(&mut val_len_buf)?;
+        let val_len = usize::from_be_bytes(val_len_buf);
+
+        let mut value = vec![0u8; val_len];
+        reader.read_exact(&mut value)?;
+
+        // Timestamp
+        let mut timestamp_buf = [0u8; 8];
+        reader.read_exact(&mut timestamp_buf)?;
+        let timestamp = i64::from_be_bytes(timestamp_buf);
+
+        Ok(ServerMessage {
+            key,
+            value: value.into(),
+            timestamp,
+        })
     }
 }
 
@@ -89,15 +125,31 @@ pub struct BigPipe {
 }
 
 impl BigPipe {
-    pub fn new(wal_directory: PathBuf, wal_max_segment_size: Option<usize>) -> Self {
-        Self {
-            inner: Mutex::new(HashMap::with_capacity(100)),
-            wal: Wal::new(wal_directory, wal_max_segment_size),
+    pub fn try_new(
+        wal_directory: PathBuf,
+        wal_max_segment_size: Option<usize>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if let Some((last_segment_id, inner)) = Wal::replay(&wal_directory) {
+            let wal = Wal::try_new(last_segment_id + 1, wal_directory, wal_max_segment_size)?;
+            let inner = Mutex::new(inner);
+            Ok(Self { inner, wal })
+        } else {
+            Ok(Self {
+                inner: Mutex::new(HashMap::with_capacity(100)),
+                wal: Wal::try_new(WAL_DEFAULT_ID, wal_directory, wal_max_segment_size)?,
+            })
         }
     }
 
-    /// Add a message.
-    pub fn add_message(&mut self, message: ServerMessage) {
+    /// Write a message.
+    pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+        self.wal_write(message)?;
+        self.add_message(message);
+        Ok(())
+    }
+
+    /// Add a message to the internal structure.
+    fn add_message(&mut self, message: &ServerMessage) {
         self.inner
             .lock()
             .entry(message.key.clone())
@@ -108,7 +160,7 @@ impl BigPipe {
             .or_insert_with(|| {
                 debug!(key = message.key, "new key");
                 let mut messages = Vec::with_capacity(100);
-                messages.push(message);
+                messages.push(message.clone());
                 messages
             });
     }
@@ -144,7 +196,7 @@ mod tests {
     #[test]
     fn add_messages() {
         let wal_dir = TempDir::new().unwrap();
-        let mut q = BigPipe::new(wal_dir.path().to_path_buf(), None);
+        let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap();
 
         let msg_1 = ServerMessage::new(
             "hello".to_string(),
@@ -159,7 +211,7 @@ mod tests {
         );
 
         for msg in [msg_1.clone(), msg_2.clone()] {
-            q.add_message(msg);
+            q.add_message(&msg);
         }
 
         let messages = q.messages();
@@ -183,5 +235,36 @@ mod tests {
                 timestamp
             }
         )
+    }
+
+    #[test]
+    fn wal_replay() {
+        let dir = TempDir::new().unwrap();
+        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+
+        bigpipe
+            .write(&ServerMessage {
+                key: "hello".to_string(),
+                value: "world".into(),
+                timestamp: 1,
+            })
+            .unwrap();
+        bigpipe.wal.flush().unwrap();
+        drop(bigpipe); // drop to demonstrate replay capability
+
+        let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+
+        let messages = bigpipe.get_messages("hello").unwrap();
+        assert_eq!(messages.len(), 1);
+        let message = &messages[0];
+        assert_eq!(
+            message,
+            &ServerMessage {
+                key: "hello".to_string(),
+                value: "world".into(),
+                timestamp: 1,
+            },
+            "Expected previous message being available from replay"
+        );
     }
 }

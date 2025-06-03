@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package message;
 
-service MessageServer {
+service Message {
   rpc Send (SendMessageRequest) returns (SendMessageResponse) {}
   rpc CreateNamespace (CreateNamespaceRequest) returns (CreateNamespaceResponse) {}
 }

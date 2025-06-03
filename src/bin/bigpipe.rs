@@ -9,7 +9,7 @@ use bigpipe::{
     data_types::{ClientMessage, ServerMessage},
     BigPipe,
 };
-use protos::{message_server_client::MessageServerClient, SendMessageRequest};
+use protos::{message_client::MessageClient, SendMessageRequest};
 
 mod protos {
     use tonic::include_proto;
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.commands {
         Commands::Write { key, value, addr } => {
-            let mut client = MessageServerClient::connect(addr).await?;
+            let mut client = MessageClient::connect(addr).await?;
             let req = Request::new(SendMessageRequest {
                 key,
                 value: value.into_bytes(),

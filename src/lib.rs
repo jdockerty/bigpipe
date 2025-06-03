@@ -111,8 +111,8 @@ mod tests {
 
         let messages = q.messages();
         assert_eq!(messages.keys().len(), 2);
-        assert_eq!(q.get_messages(&msg_1.key()).unwrap()[0], msg_1);
-        assert_eq!(q.get_messages(&msg_2.key()).unwrap()[0], msg_2);
+        assert_eq!(q.get_messages(msg_1.key()).unwrap()[0], msg_1);
+        assert_eq!(q.get_messages(msg_2.key()).unwrap()[0], msg_2);
         assert!(q.get_messages("key_doesnt_exist").is_none());
     }
 

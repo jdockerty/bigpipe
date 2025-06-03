@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package message;
+
+service MessageServer {
+  rpc Send (SendMessageRequest) returns (SendMessageResponse) {}
+  rpc CreateNamespace (CreateNamespaceRequest) returns (CreateNamespaceResponse) {}
+}
+
+message SendMessageRequest {
+  string key = 1;
+  bytes value = 2;
+}
+
+message SendMessageResponse {}
+
+
+message CreateNamespaceRequest {
+  string key = 1;
+}
+
+message CreateNamespaceResponse {}

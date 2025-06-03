@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package wal;
+
+
+message SegmentEntry {
+  string key = 1;
+  bytes value = 2;
+  int64 timestamp = 3;
+}

@@ -53,6 +53,11 @@ impl ServerMessage {
         }
     }
 
+    #[cfg(test)]
+    pub fn test_message(timestamp: i64) -> Self {
+        Self::new("hello".into(), "world".into(), timestamp)
+    }
+
     pub fn key(&self) -> &str {
         &self.key
     }

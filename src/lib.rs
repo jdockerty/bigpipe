@@ -88,10 +88,6 @@ mod tests {
 
     use crate::{BigPipe, ServerMessage};
 
-    fn test_server_message(timestamp: i64) -> ServerMessage {
-        ServerMessage::new("hello".into(), "world".into(), timestamp)
-    }
-
     #[test]
     fn add_messages() {
         let wal_dir = TempDir::new().unwrap();
@@ -125,7 +121,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
 
-        bigpipe.write(&test_server_message(1)).unwrap();
+        bigpipe.write(&ServerMessage::test_message(1)).unwrap();
         bigpipe.wal.flush().unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
@@ -136,7 +132,7 @@ mod tests {
         let message = &messages[0];
         assert_eq!(
             message,
-            &test_server_message(1),
+            &ServerMessage::test_message(1),
             "Expected previous message being available from replay"
         );
     }

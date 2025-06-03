@@ -210,10 +210,6 @@ mod test {
 
     use super::*;
 
-    fn test_server_message(timestamp: i64) -> ServerMessage {
-        ServerMessage::new("hello".into(), "world".into(), timestamp)
-    }
-
     #[test]
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
@@ -238,7 +234,7 @@ mod test {
 
         let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
-        wal.write(&test_server_message(0)).unwrap();
+        wal.write(&ServerMessage::test_message(0)).unwrap();
         wal.flush().unwrap();
 
         assert!(wal.active_segment_path().exists());
@@ -259,7 +255,7 @@ mod test {
         let server_msg_size = 34;
 
         for _ in 0..=2 {
-            wal.write(&test_server_message(0)).unwrap();
+            wal.write(&ServerMessage::test_message(0)).unwrap();
             wal.flush().unwrap();
         }
 
@@ -294,7 +290,7 @@ mod test {
         .unwrap();
 
         for i in 0..100 {
-            wal.write(&test_server_message(i)).unwrap();
+            wal.write(&ServerMessage::test_message(i)).unwrap();
             wal.active_segment.flush().unwrap();
         }
         wal.flush().unwrap();
@@ -306,7 +302,7 @@ mod test {
         let contained_messages = messages.get("hello").unwrap();
         assert_eq!(contained_messages.len(), 100);
         for (i, msg) in contained_messages.iter().enumerate().take(100) {
-            assert_eq!(*msg, test_server_message(i as i64));
+            assert_eq!(*msg, ServerMessage::test_message(i as i64));
         }
 
         assert!(

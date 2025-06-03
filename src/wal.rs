@@ -73,7 +73,7 @@ impl Wal {
                 match ServerMessage::try_from(&mut reader as &mut dyn Read) {
                     Ok(msg) => {
                         messages
-                            .entry(msg.key.clone())
+                            .entry(msg.key().to_string())
                             .and_modify(|occupied_messages: &mut Vec<ServerMessage>| {
                                 occupied_messages.push(msg.clone())
                             })
@@ -210,6 +210,10 @@ mod test {
 
     use super::*;
 
+    fn test_server_message(timestamp: i64) -> ServerMessage {
+        ServerMessage::new("hello".into(), "world".into(), timestamp)
+    }
+
     #[test]
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
@@ -234,13 +238,7 @@ mod test {
 
         let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
-        wal.write(&ServerMessage {
-            key: "hello".to_string(),
-            value: "world".into(),
-            timestamp: 1,
-        })
-        .unwrap();
-
+        wal.write(&test_server_message(0)).unwrap();
         wal.flush().unwrap();
 
         assert!(wal.active_segment_path().exists());
@@ -261,12 +259,7 @@ mod test {
         let server_msg_size = 34;
 
         for _ in 0..=2 {
-            wal.write(&ServerMessage {
-                key: "hello".to_string(),
-                value: "world".into(),
-                timestamp: 1,
-            })
-            .unwrap();
+            wal.write(&test_server_message(0)).unwrap();
             wal.flush().unwrap();
         }
 
@@ -301,12 +294,7 @@ mod test {
         .unwrap();
 
         for i in 0..100 {
-            let msg = ServerMessage {
-                key: "hello".to_string(),
-                value: "world".into(),
-                timestamp: i,
-            };
-            wal.write(&msg).unwrap();
+            wal.write(&test_server_message(i)).unwrap();
             wal.active_segment.flush().unwrap();
         }
         wal.flush().unwrap();
@@ -318,14 +306,7 @@ mod test {
         let contained_messages = messages.get("hello").unwrap();
         assert_eq!(contained_messages.len(), 100);
         for (i, msg) in contained_messages.iter().enumerate().take(100) {
-            assert_eq!(
-                *msg,
-                ServerMessage {
-                    key: "hello".to_string(),
-                    value: "world".into(),
-                    timestamp: i as i64,
-                }
-            );
+            assert_eq!(*msg, test_server_message(i as i64));
         }
 
         assert!(

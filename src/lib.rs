@@ -47,13 +47,13 @@ impl BigPipe {
     fn add_message(&mut self, message: &ServerMessage) {
         self.inner
             .lock()
-            .entry(message.key.clone())
+            .entry(message.key().to_string())
             .and_modify(|messages| {
-                debug!(key = message.key, "updating");
+                debug!(key = message.key(), "updating");
                 messages.push(message.clone())
             })
             .or_insert_with(|| {
-                debug!(key = message.key, "new key");
+                debug!(key = message.key(), "new key");
                 let mut messages = Vec::with_capacity(100);
                 messages.push(message.clone());
                 messages
@@ -86,7 +86,11 @@ impl BigPipe {
 mod tests {
     use tempfile::TempDir;
 
-    use crate::{BigPipe, ClientMessage, ServerMessage};
+    use crate::{BigPipe, ServerMessage};
+
+    fn test_server_message(timestamp: i64) -> ServerMessage {
+        ServerMessage::new("hello".into(), "world".into(), timestamp)
+    }
 
     #[test]
     fn add_messages() {
@@ -111,25 +115,9 @@ mod tests {
 
         let messages = q.messages();
         assert_eq!(messages.keys().len(), 2);
-        assert_eq!(q.get_messages(&msg_1.key).unwrap()[0], msg_1);
-        assert_eq!(q.get_messages(&msg_2.key).unwrap()[0], msg_2);
+        assert_eq!(q.get_messages(&msg_1.key()).unwrap()[0], msg_1);
+        assert_eq!(q.get_messages(&msg_2.key()).unwrap()[0], msg_2);
         assert!(q.get_messages("key_doesnt_exist").is_none());
-    }
-
-    #[test]
-    fn message_conversion() {
-        let client_msg = ClientMessage::new("hello".to_string(), "world".into());
-        let timestamp = 100;
-
-        let server_msg = client_msg.into_server_message(timestamp);
-        assert_eq!(
-            server_msg,
-            ServerMessage {
-                key: "hello".to_string(),
-                value: "world".into(),
-                timestamp
-            }
-        )
     }
 
     #[test]
@@ -137,13 +125,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
 
-        bigpipe
-            .write(&ServerMessage {
-                key: "hello".to_string(),
-                value: "world".into(),
-                timestamp: 1,
-            })
-            .unwrap();
+        bigpipe.write(&test_server_message(1)).unwrap();
         bigpipe.wal.flush().unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
@@ -154,11 +136,7 @@ mod tests {
         let message = &messages[0];
         assert_eq!(
             message,
-            &ServerMessage {
-                key: "hello".to_string(),
-                value: "world".into(),
-                timestamp: 1,
-            },
+            &test_server_message(1),
             "Expected previous message being available from replay"
         );
     }

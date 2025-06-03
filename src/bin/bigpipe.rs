@@ -8,7 +8,10 @@ use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use tracing::{debug, error, info};
 
-use bigpipe::{BigPipe, ClientMessage, ServerMessage};
+use bigpipe::{
+    data_types::{ClientMessage, ServerMessage},
+    BigPipe,
+};
 
 #[derive(Parser)]
 struct Cli {

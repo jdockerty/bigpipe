@@ -1,17 +1,21 @@
-use std::{
-    io::Write,
-    net::{TcpListener, TcpStream},
-    path::PathBuf,
-};
+use std::{net::TcpListener, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use tonic::Request;
 use tracing::{debug, error, info};
 
 use bigpipe::{
     data_types::{ClientMessage, ServerMessage},
     BigPipe,
 };
+use protos::{message_server_client::MessageServerClient, SendMessageRequest};
+
+mod protos {
+    use tonic::include_proto;
+
+    include_proto!("message");
+}
 
 #[derive(Parser)]
 struct Cli {
@@ -48,18 +52,18 @@ enum Commands {
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.commands {
         Commands::Write { key, value, addr } => {
-            let message = ClientMessage::new(key, value.into());
-
-            let mut stream = TcpStream::connect(addr).unwrap();
-
-            stream
-                .write_all(&rmp_serde::to_vec(&message).unwrap())
-                .unwrap();
+            let mut client = MessageServerClient::connect(addr).await?;
+            let req = Request::new(SendMessageRequest {
+                key,
+                value: value.into_bytes(),
+            });
+            client.send(req).await?;
         }
         Commands::Server {
             addr,

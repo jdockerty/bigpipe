@@ -25,7 +25,7 @@ enum Commands {
         key: String,
         value: String,
         /// Address of the server to write to.
-        #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "0.0.0.0:7050")]
+        #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "http://0.0.0.0:7050")]
         addr: String,
     },
     /// Start a bigpipe server.

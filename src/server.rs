@@ -1,11 +1,14 @@
-use std::sync::Arc;
-
+use parking_lot::Mutex;
 use tonic::{Request, Response, Status};
+use tracing::debug;
 
 use crate::{
-    data_types::proto::{
-        message_server::Message, CreateNamespaceRequest, CreateNamespaceResponse,
-        SendMessageRequest, SendMessageResponse,
+    data_types::{
+        proto::{
+            message_server::Message, CreateNamespaceRequest, CreateNamespaceResponse,
+            SendMessageRequest, SendMessageResponse,
+        },
+        ServerMessage,
     },
     BigPipe,
 };
@@ -13,13 +16,13 @@ use crate::{
 /// A server which wraps an instance of [`BigPipe`] and exposes
 /// it over HTTP/2 for incoming gRPC connections.
 pub struct BigPipeServer {
-    inner: Arc<BigPipe>,
+    inner: Mutex<BigPipe>,
 }
 
 impl BigPipeServer {
     pub fn new(inner: BigPipe) -> Self {
         Self {
-            inner: Arc::new(inner),
+            inner: Mutex::new(inner),
         }
     }
 }
@@ -28,9 +31,16 @@ impl BigPipeServer {
 impl Message for BigPipeServer {
     async fn send(
         &self,
-        _request: Request<SendMessageRequest>,
+        request: Request<SendMessageRequest>,
     ) -> Result<Response<SendMessageResponse>, Status> {
-        unimplemented!();
+        let SendMessageRequest { key, value } = request.into_inner();
+        debug!(key, value_size = value.len(), "received client message");
+        let timestamp = chrono::Utc::now().timestamp_micros();
+        self.inner
+            .lock()
+            .write(&ServerMessage::new(key, value.into(), timestamp))
+            .unwrap();
+        Ok(Response::new(SendMessageResponse {}))
     }
 
     async fn create_namespace(

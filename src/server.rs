@@ -59,7 +59,10 @@ mod test {
 
     use crate::{
         data_types::{
-            proto::{message_server::Message, SendMessageRequest, SendMessageResponse},
+            proto::{
+                message_server::Message, CreateNamespaceRequest, SendMessageRequest,
+                SendMessageResponse,
+            },
             ServerMessage,
         },
         server::BigPipeServer,
@@ -86,5 +89,18 @@ mod test {
         assert_matches!(messages.get("hello").unwrap()[0], ServerMessage { .. });
         assert!(messages.get("no_msg").is_none());
         assert_eq!(resp.into_inner(), SendMessageResponse {});
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn server_create_namespace() {
+        let wal_dir = TempDir::new().unwrap();
+        let server =
+            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+
+        let namespace = CreateNamespaceRequest {
+            key: "hello".to_string(),
+        };
+        let _ = server.create_namespace(Request::new(namespace)).await;
     }
 }

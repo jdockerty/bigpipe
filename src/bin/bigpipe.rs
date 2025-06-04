@@ -67,32 +67,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             verbosity,
         } => {
             tracing_subscriber::fmt().with_max_level(verbosity).init();
-            let mut bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size)?;
+            let bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size)?;
+            let bigpipe_server = BigPipeServer::new(bigpipe);
 
-            let listener = TcpListener::bind(addr).unwrap();
-            info!(address = %listener.local_addr().unwrap(), wal_directory = %wal_directory.to_string_lossy(), "bigpipe running");
-
-            for stream in listener.incoming() {
-                let stream = stream?;
-                let message: ClientMessage = match rmp_serde::from_read(&stream) {
-                    Ok(message) => message,
-                    Err(e) => {
-                        let peer = stream.peer_addr()?;
-                        error!(%peer, ?e);
-                        continue;
-                    }
-                };
-
-                debug!(
-                    key = message.key(),
-                    value_size = message.value().len(),
-                    "received client message"
-                );
-
-                let timestamp = chrono::Utc::now().timestamp_micros();
-                let server_msg: ServerMessage = message.into_server_message(timestamp);
-                bigpipe.write(&server_msg)?;
-            }
+            Server::builder()
+                .add_service(MessageServer::new(bigpipe_server))
+                .serve(SocketAddr::from_str(&addr)?)
+                .await?;
         }
     }
     Ok(())

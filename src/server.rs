@@ -50,3 +50,41 @@ impl Message for BigPipeServer {
         unimplemented!();
     }
 }
+
+#[cfg(test)]
+mod test {
+    use assert_matches::assert_matches;
+    use tempfile::TempDir;
+    use tonic::Request;
+
+    use crate::{
+        data_types::{
+            proto::{message_server::Message, SendMessageRequest, SendMessageResponse},
+            ServerMessage,
+        },
+        server::BigPipeServer,
+        BigPipe,
+    };
+
+    #[tokio::test]
+    async fn server_send_message() {
+        let wal_dir = TempDir::new().unwrap();
+        let server =
+            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+
+        let resp = server
+            .send(Request::new(SendMessageRequest {
+                key: "hello".to_string(),
+                value: "world".into(),
+            }))
+            .await
+            .unwrap();
+
+        let bigpipe = server.inner.lock();
+        let messages = bigpipe.messages();
+        assert_eq!(messages.get("hello").unwrap().len(), 1);
+        assert_matches!(messages.get("hello").unwrap()[0], ServerMessage { .. });
+        assert!(messages.get("no_msg").is_none());
+        assert_eq!(resp.into_inner(), SendMessageResponse {});
+    }
+}

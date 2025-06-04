@@ -1,21 +1,16 @@
-use std::{net::TcpListener, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use tonic::Request;
-use tracing::{debug, error, info};
+use tonic::{transport::Server, Request};
 
 use bigpipe::{
-    data_types::{ClientMessage, ServerMessage},
+    data_types::proto::{
+        message_client::MessageClient, message_server::MessageServer, SendMessageRequest,
+    },
+    server::BigPipeServer,
     BigPipe,
 };
-use protos::{message_client::MessageClient, SendMessageRequest};
-
-mod protos {
-    use tonic::include_proto;
-
-    include_proto!("message");
-}
 
 #[derive(Parser)]
 struct Cli {

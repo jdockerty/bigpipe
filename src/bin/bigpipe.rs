@@ -1,15 +1,14 @@
-use std::{
-    io::Write,
-    net::{TcpListener, TcpStream},
-    path::PathBuf,
-};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use tracing::{debug, error, info};
+use tonic::{transport::Server, Request};
 
 use bigpipe::{
-    data_types::{ClientMessage, ServerMessage},
+    data_types::proto::{
+        message_client::MessageClient, message_server::MessageServer, SendMessageRequest,
+    },
+    server::BigPipeServer,
     BigPipe,
 };
 
@@ -26,7 +25,7 @@ enum Commands {
         key: String,
         value: String,
         /// Address of the server to write to.
-        #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "0.0.0.0:7050")]
+        #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "http://0.0.0.0:7050")]
         addr: String,
     },
     /// Start a bigpipe server.
@@ -48,18 +47,18 @@ enum Commands {
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.commands {
         Commands::Write { key, value, addr } => {
-            let message = ClientMessage::new(key, value.into());
-
-            let mut stream = TcpStream::connect(addr).unwrap();
-
-            stream
-                .write_all(&rmp_serde::to_vec(&message).unwrap())
-                .unwrap();
+            let mut client = MessageClient::connect(addr).await?;
+            let req = Request::new(SendMessageRequest {
+                key,
+                value: value.into_bytes(),
+            });
+            client.send(req).await?;
         }
         Commands::Server {
             addr,
@@ -68,32 +67,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             verbosity,
         } => {
             tracing_subscriber::fmt().with_max_level(verbosity).init();
-            let mut bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size)?;
+            let bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size)?;
+            let bigpipe_server = BigPipeServer::new(bigpipe);
 
-            let listener = TcpListener::bind(addr).unwrap();
-            info!(address = %listener.local_addr().unwrap(), wal_directory = %wal_directory.to_string_lossy(), "bigpipe running");
-
-            for stream in listener.incoming() {
-                let stream = stream?;
-                let message: ClientMessage = match rmp_serde::from_read(&stream) {
-                    Ok(message) => message,
-                    Err(e) => {
-                        let peer = stream.peer_addr()?;
-                        error!(%peer, ?e);
-                        continue;
-                    }
-                };
-
-                debug!(
-                    key = message.key(),
-                    value_size = message.value().len(),
-                    "received client message"
-                );
-
-                let timestamp = chrono::Utc::now().timestamp_micros();
-                let server_msg: ServerMessage = message.into_server_message(timestamp);
-                bigpipe.write(&server_msg)?;
-            }
+            Server::builder()
+                .add_service(MessageServer::new(bigpipe_server))
+                .serve(SocketAddr::from_str(&addr)?)
+                .await?;
         }
     }
     Ok(())

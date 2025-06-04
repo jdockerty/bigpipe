@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use std::io::{Read, Write};
 
+pub mod proto {
+    use tonic::include_proto;
+    include_proto!("message");
+}
+
 /// A message sent by a client.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientMessage {

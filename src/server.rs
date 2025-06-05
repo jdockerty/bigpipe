@@ -1,4 +1,7 @@
+use std::pin::Pin;
+
 use parking_lot::Mutex;
+use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
 use tracing::debug;
 
@@ -6,7 +9,7 @@ use crate::{
     data_types::{
         proto::{
             message_server::Message, CreateNamespaceRequest, CreateNamespaceResponse,
-            SendMessageRequest, SendMessageResponse,
+            ReadMessageRequest, ReadMessageResponse, SendMessageRequest, SendMessageResponse,
         },
         ServerMessage,
     },
@@ -29,6 +32,9 @@ impl BigPipeServer {
 
 #[tonic::async_trait]
 impl Message for BigPipeServer {
+    type ReadStream =
+        Pin<Box<dyn Stream<Item = Result<ReadMessageResponse, Status>> + Send + 'static>>;
+
     async fn send(
         &self,
         request: Request<SendMessageRequest>,
@@ -48,6 +54,13 @@ impl Message for BigPipeServer {
         _request: Request<CreateNamespaceRequest>,
     ) -> Result<Response<CreateNamespaceResponse>, Status> {
         unimplemented!();
+    }
+
+    async fn read(
+        &self,
+        _request: Request<ReadMessageRequest>,
+    ) -> Result<Response<Self::ReadStream>, Status> {
+        unimplemented!()
     }
 }
 

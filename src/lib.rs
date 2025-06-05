@@ -67,6 +67,13 @@ impl BigPipe {
         self.inner.lock().get(partition_key).cloned()
     }
 
+    /// Get a range of messages starting from the `offset`.
+    pub fn get_message_range(&self, partition_key: &str, offset: u64) -> Vec<ServerMessage> {
+        let messages = self.get_messages(partition_key).unwrap();
+
+        messages.get_range(offset)
+    }
+
     /// Get all messages.
     pub fn messages(&self) -> HashMap<String, BigPipeValue> {
         let guard = self.inner.lock();
@@ -132,6 +139,25 @@ mod tests {
             *message,
             ServerMessage::test_message(1),
             "Expected previous message being available from replay"
+        );
+    }
+
+    #[test]
+    fn message_range() {
+        let dir = TempDir::new().unwrap();
+        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+
+        for i in 0..100 {
+            bigpipe.write(&ServerMessage::test_message(i)).unwrap();
+        }
+        bigpipe.wal.flush().unwrap();
+
+        assert_eq!(
+            bigpipe.get_message_range("hello", 10),
+            (10..100)
+                .into_iter()
+                .map(|i| ServerMessage::test_message(i))
+                .collect::<Vec<_>>()
         );
     }
 }

@@ -157,10 +157,10 @@ impl BigPipeValue {
         &self.queue[offset as usize]
     }
 
-    pub fn get_range(&self, offset: u64) -> &[ServerMessage] {
+    pub fn get_range(&self, offset: u64) -> Vec<ServerMessage> {
         assert!(offset < self.len());
         let (_, after) = self.queue.split_at(offset as usize);
-        after
+        after.to_vec()
     }
 }
 

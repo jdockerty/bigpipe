@@ -8,14 +8,14 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 use tracing::debug;
 
-use data_types::ServerMessage;
+use data_types::{BigPipeValue, ServerMessage};
 use wal::{Wal, WAL_DEFAULT_ID};
 
 #[derive(Debug)]
 pub struct BigPipe {
     /// Internal queue to hold ordered messages as they are received,
     /// partitioned by their key.
-    inner: Mutex<HashMap<String, Vec<ServerMessage>>>,
+    inner: Mutex<HashMap<String, BigPipeValue>>,
     /// Write ahead log to ensure durability of writes.
     wal: Wal,
 }
@@ -55,7 +55,7 @@ impl BigPipe {
             })
             .or_insert_with(|| {
                 debug!(key = message.key(), "new key");
-                let mut messages = Vec::with_capacity(100);
+                let mut messages = BigPipeValue::new();
                 messages.push(message.clone());
                 messages
             });
@@ -63,15 +63,12 @@ impl BigPipe {
 
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
-    pub fn get_messages(&self, partition_key: &str) -> Option<Vec<ServerMessage>> {
-        self.inner
-            .lock()
-            .get(partition_key)
-            .map(|messages| messages.to_vec())
+    pub fn get_messages(&self, partition_key: &str) -> Option<BigPipeValue> {
+        self.inner.lock().get(partition_key).cloned()
     }
 
     /// Get all messages.
-    pub fn messages(&self) -> HashMap<String, Vec<ServerMessage>> {
+    pub fn messages(&self) -> HashMap<String, BigPipeValue> {
         let guard = self.inner.lock();
         guard.clone()
     }
@@ -112,8 +109,8 @@ mod tests {
 
         let messages = q.messages();
         assert_eq!(messages.keys().len(), 2);
-        assert_eq!(q.get_messages(msg_1.key()).unwrap()[0], msg_1);
-        assert_eq!(q.get_messages(msg_2.key()).unwrap()[0], msg_2);
+        assert_eq!(*q.get_messages(msg_1.key()).unwrap().get(0), msg_1);
+        assert_eq!(*q.get_messages(msg_2.key()).unwrap().get(0), msg_2);
         assert!(q.get_messages("key_doesnt_exist").is_none());
     }
 
@@ -130,10 +127,10 @@ mod tests {
 
         let messages = bigpipe.get_messages("hello").unwrap();
         assert_eq!(messages.len(), 1);
-        let message = &messages[0];
+        let message = messages.get(0);
         assert_eq!(
-            message,
-            &ServerMessage::test_message(1),
+            *message,
+            ServerMessage::test_message(1),
             "Expected previous message being available from replay"
         );
     }

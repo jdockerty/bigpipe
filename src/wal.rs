@@ -7,6 +7,7 @@ use hashbrown::HashMap;
 use tracing::{debug, info};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::data_types::BigPipeValue;
 use crate::ServerMessage;
 
 pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB
@@ -38,9 +39,7 @@ impl Wal {
         })
     }
 
-    pub fn replay<P: AsRef<Path>>(
-        directory: P,
-    ) -> Option<(u64, HashMap<String, Vec<ServerMessage>>)> {
+    pub fn replay<P: AsRef<Path>>(directory: P) -> Option<(u64, HashMap<String, BigPipeValue>)> {
         let mut highest_segment_id: u64 = WAL_DEFAULT_ID;
         let mut segment_paths = Vec::new();
 
@@ -74,11 +73,11 @@ impl Wal {
                     Ok(msg) => {
                         messages
                             .entry(msg.key().to_string())
-                            .and_modify(|occupied_messages: &mut Vec<ServerMessage>| {
+                            .and_modify(|occupied_messages: &mut BigPipeValue| {
                                 occupied_messages.push(msg.clone())
                             })
                             .or_insert_with(|| {
-                                let mut messages = Vec::with_capacity(100);
+                                let mut messages = BigPipeValue::new();
                                 messages.push(msg);
                                 messages
                             });
@@ -299,10 +298,10 @@ mod test {
         assert_eq!(last_segment_id, 49);
         assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
 
-        let contained_messages = messages.get("hello").unwrap();
+        let contained_messages = messages.get("hello").unwrap().clone();
         assert_eq!(contained_messages.len(), 100);
-        for (i, msg) in contained_messages.iter().enumerate().take(100) {
-            assert_eq!(*msg, ServerMessage::test_message(i as i64));
+        for (i, msg) in contained_messages.into_iter().enumerate().take(100) {
+            assert_eq!(msg, ServerMessage::test_message(i as i64));
         }
 
         assert!(

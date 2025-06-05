@@ -99,7 +99,7 @@ mod test {
         let bigpipe = server.inner.lock();
         let messages = bigpipe.messages();
         assert_eq!(messages.get("hello").unwrap().len(), 1);
-        assert_matches!(messages.get("hello").unwrap()[0], ServerMessage { .. });
+        assert_matches!(messages.get("hello").unwrap().get(0), ServerMessage { .. });
         assert!(messages.get("no_msg").is_none());
         assert_eq!(resp.into_inner(), SendMessageResponse {});
     }

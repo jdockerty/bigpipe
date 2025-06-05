@@ -129,28 +129,6 @@ impl TryFrom<&mut dyn Read> for ServerMessage {
     }
 }
 
-#[cfg(test)]
-mod test {
-
-    use super::*;
-
-    #[test]
-    fn message_conversion() {
-        let client_msg = ClientMessage::new("hello".to_string(), "world".into());
-        let timestamp = 100;
-
-        let server_msg = client_msg.into_server_message(timestamp);
-        assert_eq!(
-            server_msg,
-            ServerMessage {
-                key: "hello".to_string(),
-                value: "world".into(),
-                timestamp
-            }
-        )
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct BigPipeValue {
     queue: Vec<ServerMessage>,
@@ -178,6 +156,12 @@ impl BigPipeValue {
         assert!(offset < self.len());
         &self.queue[offset as usize]
     }
+
+    pub fn get_range(&self, offset: u64) -> &[ServerMessage] {
+        assert!(offset < self.len());
+        let (_, after) = self.queue.split_at(offset as usize);
+        after
+    }
 }
 
 impl IntoIterator for BigPipeValue {
@@ -186,5 +170,58 @@ impl IntoIterator for BigPipeValue {
 
     fn into_iter(self) -> Self::IntoIter {
         self.queue.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+
+    #[test]
+    fn message_conversion() {
+        let client_msg = ClientMessage::new("hello".to_string(), "world".into());
+        let timestamp = 100;
+
+        let server_msg = client_msg.into_server_message(timestamp);
+        assert_eq!(
+            server_msg,
+            ServerMessage {
+                key: "hello".to_string(),
+                value: "world".into(),
+                timestamp
+            }
+        )
+    }
+
+    #[test]
+    fn get_value() {
+        let mut value = BigPipeValue::new();
+        value.push(ServerMessage::test_message(100));
+        assert_eq!(*value.get(0), ServerMessage::test_message(100));
+    }
+
+    #[test]
+    #[should_panic]
+    // this will very likely change to an `Option`
+    fn get_value_invariant() {
+        let value = BigPipeValue::new();
+        value.get(100);
+    }
+
+    #[test]
+    fn get_value_range() {
+        let mut value = BigPipeValue::new();
+
+        let mut known_values = Vec::new();
+        for i in 0..100 {
+            let msg = ServerMessage::test_message(i);
+            value.push(msg.clone());
+            known_values.push(msg.clone());
+        }
+
+        assert_eq!(value.get_range(0), &known_values[..]);
+        assert_eq!(value.get_range(5), &known_values[5..known_values.len()]);
+        assert_eq!(value.get_range(99)[0], ServerMessage::test_message(99));
     }
 }

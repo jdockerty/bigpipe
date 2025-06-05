@@ -5,6 +5,7 @@ package message;
 service Message {
   rpc Send (SendMessageRequest) returns (SendMessageResponse) {}
   rpc CreateNamespace (CreateNamespaceRequest) returns (CreateNamespaceResponse) {}
+  rpc Read (ReadMessageRequest) returns (stream ReadMessageResponse) {}
 }
 
 message SendMessageRequest {
@@ -20,3 +21,13 @@ message CreateNamespaceRequest {
 }
 
 message CreateNamespaceResponse {}
+
+message ReadMessageRequest {
+  string key = 1;
+  int64 offset = 2;
+}
+
+message ReadMessageResponse {
+  string key = 1;
+  bytes value = 2;
+}

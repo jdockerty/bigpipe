@@ -135,6 +135,12 @@ pub struct BigPipeValue {
     length: Arc<AtomicU64>,
 }
 
+impl Default for BigPipeValue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BigPipeValue {
     pub fn new() -> Self {
         Self {
@@ -145,6 +151,10 @@ impl BigPipeValue {
 
     pub fn len(&self) -> u64 {
         self.length.load(Ordering::Acquire)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
     }
 
     pub fn push(&mut self, value: ServerMessage) {

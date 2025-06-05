@@ -155,8 +155,7 @@ mod tests {
         assert_eq!(
             bigpipe.get_message_range("hello", 10),
             (10..100)
-                .into_iter()
-                .map(|i| ServerMessage::test_message(i))
+                .map(ServerMessage::test_message)
                 .collect::<Vec<_>>()
         );
     }

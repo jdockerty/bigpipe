@@ -1,7 +1,13 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 pub mod proto {
     use tonic::include_proto;
@@ -142,5 +148,43 @@ mod test {
                 timestamp
             }
         )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BigPipeValue {
+    queue: Vec<ServerMessage>,
+    length: Arc<AtomicU64>,
+}
+
+impl BigPipeValue {
+    pub fn new() -> Self {
+        Self {
+            queue: Vec::with_capacity(100),
+            length: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn len(&self) -> u64 {
+        self.length.load(Ordering::Acquire)
+    }
+
+    pub fn push(&mut self, value: ServerMessage) {
+        self.queue.push(value);
+        self.length.fetch_add(1, Ordering::Release);
+    }
+
+    pub fn get(&self, offset: u64) -> &ServerMessage {
+        assert!(offset < self.len());
+        &self.queue[offset as usize]
+    }
+}
+
+impl IntoIterator for BigPipeValue {
+    type Item = ServerMessage;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.queue.into_iter()
     }
 }

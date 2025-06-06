@@ -65,7 +65,7 @@ impl Message for BigPipeServer {
             "client connection"
         );
         let ReadMessageRequest { key, offset } = request.into_inner();
-        match self.inner.lock().get_message_range(&key, offset as u64) {
+        match self.inner.lock().get_message_range(&key, offset) {
             Some(messages) => {
                 let messages = messages
                     .iter()

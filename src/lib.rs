@@ -73,10 +73,8 @@ impl BigPipe {
         partition_key: &str,
         offset: u64,
     ) -> Option<Vec<ServerMessage>> {
-        match self.get_messages(partition_key) {
-            Some(messages) => Some(messages.get_range(offset)),
-            None => None,
-        }
+        self.get_messages(partition_key)
+            .map(|messages| messages.get_range(offset))
     }
 
     /// Get all messages.

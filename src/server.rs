@@ -104,13 +104,14 @@ impl Message for BigPipeServer {
 mod test {
     use assert_matches::assert_matches;
     use tempfile::TempDir;
+    use tokio_stream::StreamExt;
     use tonic::Request;
 
     use crate::{
         data_types::{
             proto::{
-                message_server::Message, CreateNamespaceRequest, SendMessageRequest,
-                SendMessageResponse,
+                message_server::Message, CreateNamespaceRequest, ReadMessageRequest,
+                ReadMessageResponse, SendMessageRequest, SendMessageResponse,
             },
             ServerMessage,
         },
@@ -138,6 +139,60 @@ mod test {
         assert_matches!(messages.get("hello").unwrap().get(0), ServerMessage { .. });
         assert!(messages.get("no_msg").is_none());
         assert_eq!(resp.into_inner(), SendMessageResponse {});
+    }
+
+    #[tokio::test]
+    async fn server_read_messages() {
+        let wal_dir = TempDir::new().unwrap();
+        let server =
+            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+
+        for i in 0..10 {
+            server
+                .inner
+                .lock()
+                .write(&ServerMessage::test_message(i))
+                .unwrap();
+        }
+        server.inner.lock().wal.flush().unwrap();
+
+        let messages = server
+            .read(Request::new(ReadMessageRequest {
+                key: "hello".to_string(),
+                offset: 0,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        let all_messages = messages.collect::<Vec<_>>().await;
+        assert_eq!(all_messages.len(), 10);
+        for message in all_messages {
+            let message = message.unwrap();
+            assert_eq!(
+                message.clone(),
+                ReadMessageResponse {
+                    key: message.key,
+                    value: message.value
+                }
+            );
+        }
+
+        let messages = server
+            .read(Request::new(ReadMessageRequest {
+                key: "hello".to_string(),
+                offset: 8,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        let partial_messages = messages.collect::<Vec<_>>().await;
+        assert_eq!(
+            partial_messages.len(),
+            2,
+            "An offset of 8 expects only 2 messages to be produced"
+        );
     }
 
     #[tokio::test]

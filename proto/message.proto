@@ -24,7 +24,7 @@ message CreateNamespaceResponse {}
 
 message ReadMessageRequest {
   string key = 1;
-  int64 offset = 2;
+  uint64 offset = 2;
 }
 
 message ReadMessageResponse {

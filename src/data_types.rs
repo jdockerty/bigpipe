@@ -12,6 +12,7 @@ use std::{
 pub mod proto {
     use tonic::include_proto;
     include_proto!("message");
+    include_proto!("wal");
 }
 
 /// A message sent by a client.
@@ -75,6 +76,10 @@ impl ServerMessage {
 
     pub fn value(&self) -> Bytes {
         self.value.clone() // cheaply clonable
+    }
+
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
     }
 }
 

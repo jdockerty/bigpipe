@@ -1,12 +1,14 @@
-use std::convert::TryInto;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
+use bytes::Buf;
 use hashbrown::HashMap;
-use tracing::{debug, info};
+use prost::Message;
+use tracing::{debug, info, warn};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::data_types::proto::SegmentEntry;
 use crate::data_types::BigPipeValue;
 use crate::ServerMessage;
 
@@ -66,25 +68,36 @@ impl Wal {
 
         let mut messages = HashMap::with_capacity(1000);
         for (_, path) in segment_paths {
-            let segment_file = std::fs::File::open(path).unwrap();
-            let mut reader = BufReader::new(segment_file);
+            let mut segment_bytes: bytes::Bytes = std::fs::read(path).unwrap().into();
+
             loop {
-                match ServerMessage::try_from(&mut reader as &mut dyn Read) {
-                    Ok(msg) => {
-                        messages
-                            .entry(msg.key().to_string())
-                            .and_modify(|occupied_messages: &mut BigPipeValue| {
-                                occupied_messages.push(msg.clone())
-                            })
-                            .or_insert_with(|| {
-                                let mut messages = BigPipeValue::new();
-                                messages.push(msg);
-                                messages
-                            });
+                match SegmentEntry::decode_length_delimited(&mut segment_bytes) {
+                    Ok(entry) => messages
+                        .entry(entry.key.to_string())
+                        .and_modify(|occupied_messages: &mut BigPipeValue| {
+                            let entry = entry.clone();
+                            occupied_messages.push(ServerMessage::new(
+                                entry.key,
+                                entry.value.into(),
+                                entry.timestamp,
+                            ))
+                        })
+                        .or_insert_with(|| {
+                            let mut messages = BigPipeValue::new();
+                            messages.push(ServerMessage::new(
+                                entry.key,
+                                entry.value.into(),
+                                entry.timestamp,
+                            ));
+                            messages
+                        }),
+                    Err(e) => {
+                        // protocol buffer errors don't have a designated EOF,
+                        // this simply breaks on any sort of error during replay.
+                        warn!(?e, "stopping WAL replay");
+                        break;
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                    Err(e) => panic!("{e}"),
-                }
+                };
             }
         }
 
@@ -174,7 +187,12 @@ impl Segment {
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
     fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
-        let message_bytes: Vec<u8> = message.try_into()?;
+        let message_bytes = SegmentEntry {
+            key: message.key().to_string(),
+            value: message.value().to_vec(),
+            timestamp: message.timestamp(),
+        }
+        .encode_length_delimited_to_vec();
         let size = message_bytes.len();
 
         self.buf.write_all(&message_bytes)?;
@@ -248,10 +266,10 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64)).unwrap();
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(16)).unwrap();
 
         // Known size of the write
-        let server_msg_size = 34;
+        let server_msg_size = 15;
 
         for _ in 0..=2 {
             wal.write(&ServerMessage::test_message(0)).unwrap();
@@ -295,7 +313,7 @@ mod test {
         wal.flush().unwrap();
 
         let (last_segment_id, messages) = Wal::replay(dir.path()).unwrap();
-        assert_eq!(last_segment_id, 49);
+        assert_eq!(last_segment_id, 24);
         assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
 
         let contained_messages = messages.get("hello").unwrap().clone();

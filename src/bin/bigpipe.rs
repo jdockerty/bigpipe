@@ -2,11 +2,13 @@ use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use tokio_stream::StreamExt;
 use tonic::{transport::Server, Request};
 
 use bigpipe::{
     data_types::proto::{
-        message_client::MessageClient, message_server::MessageServer, SendMessageRequest,
+        message_client::MessageClient, message_server::MessageServer, ReadMessageRequest,
+        SendMessageRequest,
     },
     server::BigPipeServer,
     BigPipe,
@@ -24,6 +26,13 @@ enum Commands {
     Write {
         key: String,
         value: String,
+        /// Address of the server to write to.
+        #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "http://0.0.0.0:7050")]
+        addr: String,
+    },
+    Read {
+        key: String,
+        offset: u64,
         /// Address of the server to write to.
         #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "http://0.0.0.0:7050")]
         addr: String,
@@ -52,6 +61,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.commands {
+        Commands::Read { key, offset, addr } => {
+            let mut client = MessageClient::connect(addr).await?;
+
+            let mut response_stream = client
+                .read(Request::new(ReadMessageRequest { key, offset }))
+                .await?
+                .into_inner();
+
+            while let Some(message) = response_stream.next().await {
+                let message = message?;
+                // assumes string values for now
+                println!("{}", String::from_utf8_lossy(&message.value));
+            }
+        }
         Commands::Write { key, value, addr } => {
             let mut client = MessageClient::connect(addr).await?;
             let req = Request::new(SendMessageRequest {

@@ -1,8 +1,7 @@
-use std::io::{BufReader, Read};
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
-use bytes::Buf;
+use bytes::Bytes;
 use hashbrown::HashMap;
 use prost::Message;
 use tracing::{debug, info, warn};
@@ -68,7 +67,13 @@ impl Wal {
 
         let mut messages = HashMap::with_capacity(1000);
         for (_, path) in segment_paths {
-            let mut segment_bytes: bytes::Bytes = std::fs::read(path).unwrap().into();
+            // TODO: reading entirely into memory here is not
+            // great for larger files.
+            //
+            // BufReader does not `impl Buf`, a custom
+            // wrapper might help here?
+            let wal_data = std::fs::read(&path).unwrap();
+            let mut segment_bytes = Bytes::from(wal_data);
 
             loop {
                 match SegmentEntry::decode_length_delimited(&mut segment_bytes) {

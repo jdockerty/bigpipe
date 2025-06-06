@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use parking_lot::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -65,38 +65,37 @@ impl Message for BigPipeServer {
             "client connection"
         );
         let ReadMessageRequest { key, offset } = request.into_inner();
+        match self.inner.lock().get_message_range(&key, offset as u64) {
+            Some(messages) => {
+                let messages = messages
+                    .iter()
+                    .map(|m| ReadMessageResponse {
+                        key: m.key().to_string(),
+                        value: m.value().to_vec(),
+                    })
+                    .collect::<Vec<_>>();
 
-        let messages = self
-            .inner
-            .lock()
-            .get_message_range(&key, offset as u64)
-            .iter()
-            .map(|m| ReadMessageResponse {
-                key: m.key().to_string(),
-                value: m.value().to_vec(),
-            })
-            .collect::<Vec<_>>();
+                let mut stream = Box::pin(tokio_stream::iter(messages));
 
-        let mut stream = Box::pin(tokio_stream::iter(messages));
-
-        let (tx, rx) = tokio::sync::mpsc::channel(100);
-        tokio::spawn(async move {
-            // Read items from the server stream to send into the response stream
-            while let Some(item) = stream.next().await {
-                match tx.send(Ok::<ReadMessageResponse, Status>(item)).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!(?e, "unable to send response part");
-                        break;
+                let (tx, rx) = tokio::sync::mpsc::channel(100);
+                tokio::spawn(async move {
+                    // Read items from the server stream to send into the response stream
+                    while let Some(item) = stream.next().await {
+                        match tx.send(Ok::<ReadMessageResponse, Status>(item)).await {
+                            Ok(_) => {} // sent to client
+                            Err(e) => {
+                                error!(?e, "unable to send response part");
+                                break;
+                            }
+                        }
                     }
-                }
+                    info!("client disconnected");
+                });
+                let output_stream = ReceiverStream::new(rx);
+                Ok(Response::new(Box::pin(output_stream)))
             }
-            info!("client disconnected");
-        });
-
-        let output_stream = ReceiverStream::new(rx);
-
-        Ok(Response::new(Box::pin(output_stream)))
+            None => Err(Status::new(Code::NotFound, format!("{key} not found"))),
+        }
     }
 }
 
@@ -105,7 +104,7 @@ mod test {
     use assert_matches::assert_matches;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
-    use tonic::Request;
+    use tonic::{Code, Request};
 
     use crate::{
         data_types::{
@@ -189,10 +188,26 @@ mod test {
 
         let partial_messages = messages.collect::<Vec<_>>().await;
         assert_eq!(
+            server.inner.lock().get_messages("hello").unwrap().len(),
+            10,
+            "The 'hello' key should contain a total of 10 messages"
+        );
+        assert_eq!(
             partial_messages.len(),
             2,
             "An offset of 8 expects only 2 messages to be produced"
         );
+
+        match server
+            .read(Request::new(ReadMessageRequest {
+                key: "not_found".to_string(),
+                offset: 0,
+            }))
+            .await
+        {
+            Ok(_) => panic!("read against non-existent key should not exist"),
+            Err(e) => assert_eq!(e.code(), Code::NotFound),
+        }
     }
 
     #[tokio::test]

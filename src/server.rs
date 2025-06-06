@@ -1,9 +1,9 @@
 use std::pin::Pin;
 
 use parking_lot::Mutex;
-use tokio_stream::Stream;
+use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status};
-use tracing::debug;
+use tracing::{debug, error, info};
 
 use crate::{
     data_types::{
@@ -58,9 +58,45 @@ impl Message for BigPipeServer {
 
     async fn read(
         &self,
-        _request: Request<ReadMessageRequest>,
+        request: Request<ReadMessageRequest>,
     ) -> Result<Response<Self::ReadStream>, Status> {
-        unimplemented!()
+        debug!(
+            remote_addr = %request.remote_addr().unwrap(),
+            "client connection"
+        );
+        let ReadMessageRequest { key, offset } = request.into_inner();
+
+        let messages = self
+            .inner
+            .lock()
+            .get_message_range(&key, offset as u64)
+            .iter()
+            .map(|m| ReadMessageResponse {
+                key: m.key().to_string(),
+                value: m.value().to_vec(),
+            })
+            .collect::<Vec<_>>();
+
+        let mut stream = Box::pin(tokio_stream::iter(messages));
+
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        tokio::spawn(async move {
+            // Read items from the server stream to send into the response stream
+            while let Some(item) = stream.next().await {
+                match tx.send(Ok::<ReadMessageResponse, Status>(item)).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!(?e, "unable to send response part");
+                        break;
+                    }
+                }
+            }
+            info!("client disconnected");
+        });
+
+        let output_stream = ReceiverStream::new(rx);
+
+        Ok(Response::new(Box::pin(output_stream)))
     }
 }
 

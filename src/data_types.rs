@@ -162,9 +162,8 @@ impl BigPipeValue {
         self.length.fetch_add(1, Ordering::Release);
     }
 
-    pub fn get(&self, offset: u64) -> &ServerMessage {
-        assert!(offset < self.len());
-        &self.queue[offset as usize]
+    pub fn get(&self, offset: u64) -> Option<&ServerMessage> {
+        self.queue.get(offset as usize)
     }
 
     pub fn get_range(&self, offset: u64) -> Vec<ServerMessage> {
@@ -208,15 +207,8 @@ mod test {
     fn get_value() {
         let mut value = BigPipeValue::new();
         value.push(ServerMessage::test_message(100));
-        assert_eq!(*value.get(0), ServerMessage::test_message(100));
-    }
-
-    #[test]
-    #[should_panic]
-    // this will very likely change to an `Option`
-    fn get_value_invariant() {
-        let value = BigPipeValue::new();
-        value.get(100);
+        assert_eq!(*value.get(0).unwrap(), ServerMessage::test_message(100));
+        assert!(value.get(1).is_none());
     }
 
     #[test]

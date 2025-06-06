@@ -121,8 +121,8 @@ mod tests {
 
         let messages = q.messages();
         assert_eq!(messages.keys().len(), 2);
-        assert_eq!(*q.get_messages(msg_1.key()).unwrap().get(0), msg_1);
-        assert_eq!(*q.get_messages(msg_2.key()).unwrap().get(0), msg_2);
+        assert_eq!(*q.get_messages(msg_1.key()).unwrap().get(0).unwrap(), msg_1);
+        assert_eq!(*q.get_messages(msg_2.key()).unwrap().get(0).unwrap(), msg_2);
         assert!(q.get_messages("key_doesnt_exist").is_none());
     }
 
@@ -141,8 +141,8 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let message = messages.get(0);
         assert_eq!(
-            *message,
-            ServerMessage::test_message(1),
+            message.cloned(),
+            Some(ServerMessage::test_message(1)),
             "Expected previous message being available from replay"
         );
     }

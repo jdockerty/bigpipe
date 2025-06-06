@@ -68,10 +68,15 @@ impl BigPipe {
     }
 
     /// Get a range of messages starting from the `offset`.
-    pub fn get_message_range(&self, partition_key: &str, offset: u64) -> Vec<ServerMessage> {
-        let messages = self.get_messages(partition_key).unwrap();
-
-        messages.get_range(offset)
+    pub fn get_message_range(
+        &self,
+        partition_key: &str,
+        offset: u64,
+    ) -> Option<Vec<ServerMessage>> {
+        match self.get_messages(partition_key) {
+            Some(messages) => Some(messages.get_range(offset)),
+            None => None,
+        }
     }
 
     /// Get all messages.
@@ -153,7 +158,7 @@ mod tests {
         bigpipe.wal.flush().unwrap();
 
         assert_eq!(
-            bigpipe.get_message_range("hello", 10),
+            bigpipe.get_message_range("hello", 10).unwrap(),
             (10..100)
                 .map(ServerMessage::test_message)
                 .collect::<Vec<_>>()

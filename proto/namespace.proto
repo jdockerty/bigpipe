@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package namespace;
+
+service Namespace {
+  rpc Create (CreateNamespaceRequest) returns (CreateNamespaceResponse) {}
+}
+
+message CreateNamespaceRequest {
+  string key = 1;
+}
+
+message CreateNamespaceResponse {}
+

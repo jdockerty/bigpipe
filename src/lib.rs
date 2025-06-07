@@ -90,7 +90,7 @@ impl BigPipe {
             .write(data_types::WalOperation::Message(WalMessageEntry {
                 key: message.key().to_string(),
                 value: message.value(),
-                timestamp: message.timestamp() as u64,
+                timestamp: message.timestamp(),
             }))?;
         Ok(())
     }

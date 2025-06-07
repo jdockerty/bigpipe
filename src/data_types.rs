@@ -144,7 +144,7 @@ impl TryFrom<SegmentEntry> for WalOperation {
                     }))
                 }
             },
-            None => Err(format!("unknown variant encoded").into()),
+            None => Err("unknown variant encoded".into()),
         }
     }
 }

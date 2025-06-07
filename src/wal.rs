@@ -1,10 +1,11 @@
+use std::io::{self, BufReader, Read};
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::HashMap;
 use prost::Message;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::data_types::proto::SegmentEntry;
@@ -72,37 +73,43 @@ impl Wal {
             //
             // BufReader does not `impl Buf`, a custom
             // wrapper might help here?
-            let wal_data = std::fs::read(&path).unwrap();
-            let mut segment_bytes = Bytes::from(wal_data);
+            // let wal_data = std::fs::read(&path).unwrap();
+            // let mut segment_bytes = Bytes::from(wal_data);
+            let segment = std::fs::File::open(&path).unwrap();
+            let mut reader = BufReader::new(segment);
 
-            loop {
-                match SegmentEntry::decode_length_delimited(&mut segment_bytes) {
-                    Ok(entry) => messages
-                        .entry(entry.key.to_string())
-                        .and_modify(|occupied_messages: &mut BigPipeValue| {
-                            let entry = entry.clone();
-                            occupied_messages.push(ServerMessage::new(
-                                entry.key,
-                                entry.value.into(),
-                                entry.timestamp,
-                            ))
-                        })
-                        .or_insert_with(|| {
-                            let mut messages = BigPipeValue::new();
-                            messages.push(ServerMessage::new(
-                                entry.key,
-                                entry.value.into(),
-                                entry.timestamp,
-                            ));
-                            messages
-                        }),
+            while let Some(len) = read_varint(&mut reader).unwrap() {
+                let mut buf = vec![0u8; len];
+                reader.read_exact(&mut buf).unwrap();
+
+                let mut bytes = Bytes::from(buf);
+                match SegmentEntry::decode(&mut bytes) {
+                    Ok(entry) => {
+                        messages
+                            .entry(entry.key.to_string())
+                            .and_modify(|occupied_messages: &mut BigPipeValue| {
+                                let entry = entry.clone();
+                                occupied_messages.push(ServerMessage::new(
+                                    entry.key,
+                                    entry.value.into(),
+                                    entry.timestamp,
+                                ))
+                            })
+                            .or_insert_with(|| {
+                                let mut messages = BigPipeValue::new();
+                                messages.push(ServerMessage::new(
+                                    entry.key,
+                                    entry.value.into(),
+                                    entry.timestamp,
+                                ));
+                                messages
+                            });
+                    }
                     Err(e) => {
-                        // protocol buffer errors don't have a designated EOF,
-                        // this simply breaks on any sort of error during replay.
-                        warn!(?e, "stopping WAL replay");
+                        error!(?e, "wal decoding error");
                         break;
                     }
-                };
+                }
             }
         }
 
@@ -150,6 +157,30 @@ impl Wal {
     pub fn active_segment_path(&self) -> &Path {
         self.active_segment.path()
     }
+}
+
+// Adapted from <https://docs.rs/wyre/latest/src/wyre/lib.rs.html#53-70>
+fn read_varint<R: Read>(reader: &mut R) -> io::Result<Option<usize>> {
+    let mut buf = [0u8; 1];
+    let mut shift = 0;
+    let mut result: usize = 0;
+
+    for _ in 0..10 {
+        if reader.read(&mut buf)? == 0 {
+            return Ok(None); // EOF
+        }
+        let byte = buf[0];
+        result |= ((byte & 0x7F) as usize) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(Some(result));
+        }
+        shift += 7;
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "varint too long",
+    ))
 }
 
 fn parse_segment_id(entry: &DirEntry) -> u64 {

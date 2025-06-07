@@ -8,8 +8,9 @@ use tracing::{debug, error, info};
 use crate::{
     data_types::{
         proto::{
-            message_server::Message, CreateNamespaceRequest, CreateNamespaceResponse,
-            ReadMessageRequest, ReadMessageResponse, SendMessageRequest, SendMessageResponse,
+            message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
+            CreateNamespaceResponse, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
+            SendMessageResponse,
         },
         ServerMessage,
     },
@@ -47,13 +48,6 @@ impl Message for BigPipeServer {
             .write(&ServerMessage::new(key, value.into(), timestamp))
             .unwrap();
         Ok(Response::new(SendMessageResponse {}))
-    }
-
-    async fn create_namespace(
-        &self,
-        _request: Request<CreateNamespaceRequest>,
-    ) -> Result<Response<CreateNamespaceResponse>, Status> {
-        unimplemented!();
     }
 
     async fn read(
@@ -99,6 +93,16 @@ impl Message for BigPipeServer {
     }
 }
 
+#[tonic::async_trait]
+impl Namespace for BigPipeServer {
+    async fn create(
+        &self,
+        _request: Request<CreateNamespaceRequest>,
+    ) -> Result<Response<CreateNamespaceResponse>, Status> {
+        unimplemented!();
+    }
+}
+
 #[cfg(test)]
 mod test {
     use assert_matches::assert_matches;
@@ -109,8 +113,8 @@ mod test {
     use crate::{
         data_types::{
             proto::{
-                message_server::Message, CreateNamespaceRequest, ReadMessageRequest,
-                ReadMessageResponse, SendMessageRequest, SendMessageResponse,
+                message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
+                ReadMessageRequest, ReadMessageResponse, SendMessageRequest, SendMessageResponse,
             },
             ServerMessage,
         },
@@ -223,6 +227,6 @@ mod test {
         let namespace = CreateNamespaceRequest {
             key: "hello".to_string(),
         };
-        let _ = server.create_namespace(Request::new(namespace)).await;
+        let _ = server.create(Request::new(namespace)).await;
     }
 }

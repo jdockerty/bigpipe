@@ -9,6 +9,7 @@ use std::sync::{
 pub mod proto {
     use tonic::include_proto;
     include_proto!("message");
+    include_proto!("namespace");
     include_proto!("wal");
 }
 

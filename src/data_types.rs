@@ -13,7 +13,7 @@ pub mod proto {
     include_proto!("wal");
 }
 
-#[derive(Debug, Clone, prost::Enumeration)]
+#[derive(Debug, Clone, PartialEq, Eq, prost::Enumeration)]
 pub enum RetentionPolicy {
     Ttl = 0,
     DiskPressure = 1,

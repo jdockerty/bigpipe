@@ -12,7 +12,7 @@ use crate::{
             CreateNamespaceResponse, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
             SendMessageResponse, UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
-        RetentionPolicy, ServerMessage,
+        BigPipeValue, RetentionPolicy, ServerMessage,
     },
     BigPipe,
 };
@@ -104,12 +104,15 @@ impl Namespace for Arc<BigPipeServer> {
             retention_policy: _,
         } = request.into_inner();
 
-        match self.inner.lock().inner.lock().get(&key) {
-            Some(_) => Err(Status::new(
+        match self.inner.lock().inner.lock().entry(key.clone()) {
+            hashbrown::hash_map::Entry::Occupied(_) => Err(Status::new(
                 Code::AlreadyExists,
                 format!("{key} already exists"),
             )),
-            None => Ok(Response::new(CreateNamespaceResponse { key })),
+            hashbrown::hash_map::Entry::Vacant(e) => {
+                e.insert(BigPipeValue::new());
+                Ok(Response::new(CreateNamespaceResponse { key }))
+            }
         }
     }
 

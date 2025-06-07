@@ -153,16 +153,17 @@ mod test {
         data_types::{
             proto::{
                 message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
-                ReadMessageRequest, ReadMessageResponse, SendMessageRequest, SendMessageResponse,
+                ReadMessageRequest, ReadMessageResponse, RetentionPolicy, SendMessageRequest,
+                SendMessageResponse, UpdateNamespaceRequest, UpdateNamespaceResponse,
             },
-            RetentionPolicy, ServerMessage,
+            ServerMessage,
         },
         server::BigPipeServer,
         BigPipe,
     };
 
     #[tokio::test]
-    async fn server_send_message() {
+    async fn send_message() {
         let wal_dir = TempDir::new().unwrap();
         let server = Arc::new(BigPipeServer::new(
             BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
@@ -188,7 +189,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn server_read_messages() {
+    async fn read_messages() {
         let wal_dir = TempDir::new().unwrap();
         let server = Arc::new(BigPipeServer::new(
             BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
@@ -259,8 +260,7 @@ mod test {
     }
 
     #[tokio::test]
-    #[should_panic]
-    async fn server_create_namespace() {
+    async fn create_namespace() {
         let wal_dir = TempDir::new().unwrap();
         let server = Arc::new(BigPipeServer::new(
             BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
@@ -270,6 +270,81 @@ mod test {
             key: "hello".to_string(),
             retention_policy: RetentionPolicy::Ttl as i32,
         };
-        let _ = server.create(Request::new(namespace)).await;
+        let resp = server
+            .create(Request::new(namespace.clone()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            resp.key, namespace.key,
+            "Returned key should be the same as what was provided"
+        );
+
+        let resp = server
+            .create(Request::new(namespace.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            resp.code(),
+            Code::AlreadyExists,
+            "Cannot create namespace which already exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_namespace() {
+        let wal_dir = TempDir::new().unwrap();
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
+
+        let update = UpdateNamespaceRequest {
+            key: "hello".to_string(),
+            retention_policy: RetentionPolicy::Ttl as i32,
+        };
+        let resp = server
+            .update(Request::new(update.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            resp.code(),
+            Code::NotFound,
+            "Not possible to update a namespace which does not exist"
+        );
+
+        server
+            .create(Request::new(CreateNamespaceRequest {
+                key: update.key.clone(),
+                retention_policy: update.retention_policy,
+            }))
+            .await
+            .unwrap();
+
+        let new_update = UpdateNamespaceRequest {
+            retention_policy: RetentionPolicy::DiskPressure as i32,
+            key: update.key.clone(),
+        };
+
+        let resp = server
+            .update(Request::new(new_update.clone()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            resp,
+            UpdateNamespaceResponse {
+                key: new_update.key.clone()
+            }
+        );
+
+        assert_eq!(
+            server
+                .inner
+                .lock()
+                .get_messages(&new_update.key)
+                .unwrap()
+                .retention_policy(),
+            &crate::data_types::RetentionPolicy::DiskPressure
+        );
     }
 }

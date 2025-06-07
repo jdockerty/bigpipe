@@ -282,7 +282,7 @@ mod test {
 
         let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
-        wal.write(&ServerMessage::test_message(0)).unwrap();
+        wal.write(WalOperation::test_message(0)).unwrap();
         wal.flush().unwrap();
 
         assert!(wal.active_segment_path().exists());
@@ -297,13 +297,13 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(16)).unwrap();
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(24)).unwrap();
 
         // Known size of the write
-        let server_msg_size = 15;
+        let server_msg_size = 17;
 
         for _ in 0..=2 {
-            wal.write(&ServerMessage::test_message(0)).unwrap();
+            wal.write(WalOperation::test_message(0)).unwrap();
             wal.flush().unwrap();
         }
 
@@ -338,7 +338,7 @@ mod test {
         .unwrap();
 
         for i in 0..100 {
-            wal.write(&ServerMessage::test_message(i)).unwrap();
+            wal.write(WalOperation::test_message(i)).unwrap();
             wal.active_segment.flush().unwrap();
         }
         wal.flush().unwrap();

@@ -68,13 +68,6 @@ impl Wal {
 
         let mut messages = HashMap::with_capacity(1000);
         for (_, path) in segment_paths {
-            // TODO: reading entirely into memory here is not
-            // great for larger files.
-            //
-            // BufReader does not `impl Buf`, a custom
-            // wrapper might help here?
-            // let wal_data = std::fs::read(&path).unwrap();
-            // let mut segment_bytes = Bytes::from(wal_data);
             let segment = std::fs::File::open(&path).unwrap();
             let mut reader = BufReader::new(segment);
 

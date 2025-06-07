@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
@@ -32,7 +32,7 @@ impl BigPipeServer {
 }
 
 #[tonic::async_trait]
-impl Message for BigPipeServer {
+impl Message for Arc<BigPipeServer> {
     type ReadStream =
         Pin<Box<dyn Stream<Item = Result<ReadMessageResponse, Status>> + Send + 'static>>;
 
@@ -94,7 +94,7 @@ impl Message for BigPipeServer {
 }
 
 #[tonic::async_trait]
-impl Namespace for BigPipeServer {
+impl Namespace for Arc<BigPipeServer> {
     async fn create(
         &self,
         _request: Request<CreateNamespaceRequest>,
@@ -105,6 +105,8 @@ impl Namespace for BigPipeServer {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use assert_matches::assert_matches;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
@@ -125,8 +127,9 @@ mod test {
     #[tokio::test]
     async fn server_send_message() {
         let wal_dir = TempDir::new().unwrap();
-        let server =
-            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
 
         let resp = server
             .send(Request::new(SendMessageRequest {
@@ -150,8 +153,9 @@ mod test {
     #[tokio::test]
     async fn server_read_messages() {
         let wal_dir = TempDir::new().unwrap();
-        let server =
-            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
 
         for i in 0..10 {
             server
@@ -221,8 +225,9 @@ mod test {
     #[should_panic]
     async fn server_create_namespace() {
         let wal_dir = TempDir::new().unwrap();
-        let server =
-            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
 
         let namespace = CreateNamespaceRequest {
             key: "hello".to_string(),

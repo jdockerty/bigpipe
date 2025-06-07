@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
@@ -8,10 +8,11 @@ use tracing::{debug, error, info};
 use crate::{
     data_types::{
         proto::{
-            message_server::Message, CreateNamespaceRequest, CreateNamespaceResponse,
-            ReadMessageRequest, ReadMessageResponse, SendMessageRequest, SendMessageResponse,
+            message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
+            CreateNamespaceResponse, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
+            SendMessageResponse, UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
-        ServerMessage,
+        BigPipeValue, RetentionPolicy, ServerMessage,
     },
     BigPipe,
 };
@@ -31,7 +32,7 @@ impl BigPipeServer {
 }
 
 #[tonic::async_trait]
-impl Message for BigPipeServer {
+impl Message for Arc<BigPipeServer> {
     type ReadStream =
         Pin<Box<dyn Stream<Item = Result<ReadMessageResponse, Status>> + Send + 'static>>;
 
@@ -47,13 +48,6 @@ impl Message for BigPipeServer {
             .write(&ServerMessage::new(key, value.into(), timestamp))
             .unwrap();
         Ok(Response::new(SendMessageResponse {}))
-    }
-
-    async fn create_namespace(
-        &self,
-        _request: Request<CreateNamespaceRequest>,
-    ) -> Result<Response<CreateNamespaceResponse>, Status> {
-        unimplemented!();
     }
 
     async fn read(
@@ -99,8 +93,57 @@ impl Message for BigPipeServer {
     }
 }
 
+#[tonic::async_trait]
+impl Namespace for Arc<BigPipeServer> {
+    async fn create(
+        &self,
+        request: Request<CreateNamespaceRequest>,
+    ) -> Result<Response<CreateNamespaceResponse>, Status> {
+        let CreateNamespaceRequest {
+            key,
+            retention_policy: _,
+        } = request.into_inner();
+
+        match self.inner.lock().inner.lock().entry(key.clone()) {
+            hashbrown::hash_map::Entry::Occupied(_) => Err(Status::new(
+                Code::AlreadyExists,
+                format!("{key} already exists"),
+            )),
+            hashbrown::hash_map::Entry::Vacant(e) => {
+                e.insert(BigPipeValue::new());
+                Ok(Response::new(CreateNamespaceResponse { key }))
+            }
+        }
+    }
+
+    async fn update(
+        &self,
+        request: Request<UpdateNamespaceRequest>,
+    ) -> Result<Response<UpdateNamespaceResponse>, Status> {
+        let UpdateNamespaceRequest {
+            key,
+            retention_policy,
+        } = request.into_inner();
+
+        let retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
+
+        match self.inner.lock().inner.lock().get_key_value_mut(&key) {
+            Some((_, value)) => {
+                value.set_retention_policy(retention_policy);
+                Ok(Response::new(UpdateNamespaceResponse { key }))
+            }
+            None => Err(Status::new(
+                Code::NotFound,
+                format!("cannot update non-existent namespace '{key}'"),
+            )),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use assert_matches::assert_matches;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
@@ -109,8 +152,9 @@ mod test {
     use crate::{
         data_types::{
             proto::{
-                message_server::Message, CreateNamespaceRequest, ReadMessageRequest,
-                ReadMessageResponse, SendMessageRequest, SendMessageResponse,
+                message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
+                ReadMessageRequest, ReadMessageResponse, RetentionPolicy, SendMessageRequest,
+                SendMessageResponse, UpdateNamespaceRequest, UpdateNamespaceResponse,
             },
             ServerMessage,
         },
@@ -119,10 +163,11 @@ mod test {
     };
 
     #[tokio::test]
-    async fn server_send_message() {
+    async fn send_message() {
         let wal_dir = TempDir::new().unwrap();
-        let server =
-            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
 
         let resp = server
             .send(Request::new(SendMessageRequest {
@@ -144,10 +189,11 @@ mod test {
     }
 
     #[tokio::test]
-    async fn server_read_messages() {
+    async fn read_messages() {
         let wal_dir = TempDir::new().unwrap();
-        let server =
-            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
 
         for i in 0..10 {
             server
@@ -214,15 +260,91 @@ mod test {
     }
 
     #[tokio::test]
-    #[should_panic]
-    async fn server_create_namespace() {
+    async fn create_namespace() {
         let wal_dir = TempDir::new().unwrap();
-        let server =
-            BigPipeServer::new(BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap());
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
 
         let namespace = CreateNamespaceRequest {
             key: "hello".to_string(),
+            retention_policy: RetentionPolicy::Ttl as i32,
         };
-        let _ = server.create_namespace(Request::new(namespace)).await;
+        let resp = server
+            .create(Request::new(namespace.clone()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            resp.key, namespace.key,
+            "Returned key should be the same as what was provided"
+        );
+
+        let resp = server
+            .create(Request::new(namespace.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            resp.code(),
+            Code::AlreadyExists,
+            "Cannot create namespace which already exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_namespace() {
+        let wal_dir = TempDir::new().unwrap();
+        let server = Arc::new(BigPipeServer::new(
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+        ));
+
+        let update = UpdateNamespaceRequest {
+            key: "hello".to_string(),
+            retention_policy: RetentionPolicy::Ttl as i32,
+        };
+        let resp = server
+            .update(Request::new(update.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            resp.code(),
+            Code::NotFound,
+            "Not possible to update a namespace which does not exist"
+        );
+
+        server
+            .create(Request::new(CreateNamespaceRequest {
+                key: update.key.clone(),
+                retention_policy: update.retention_policy,
+            }))
+            .await
+            .unwrap();
+
+        let new_update = UpdateNamespaceRequest {
+            retention_policy: RetentionPolicy::DiskPressure as i32,
+            key: update.key.clone(),
+        };
+
+        let resp = server
+            .update(Request::new(new_update.clone()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            resp,
+            UpdateNamespaceResponse {
+                key: new_update.key.clone()
+            }
+        );
+
+        assert_eq!(
+            server
+                .inner
+                .lock()
+                .get_messages(&new_update.key)
+                .unwrap()
+                .retention_policy(),
+            &crate::data_types::RetentionPolicy::DiskPressure
+        );
     }
 }

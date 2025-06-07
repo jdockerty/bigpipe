@@ -9,7 +9,14 @@ use std::sync::{
 pub mod proto {
     use tonic::include_proto;
     include_proto!("message");
+    include_proto!("namespace");
     include_proto!("wal");
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, prost::Enumeration)]
+pub enum RetentionPolicy {
+    Ttl = 0,
+    DiskPressure = 1,
 }
 
 /// A message sent by a client.
@@ -84,6 +91,7 @@ impl ServerMessage {
 pub struct BigPipeValue {
     queue: Vec<ServerMessage>,
     length: Arc<AtomicU64>,
+    retention_policy: RetentionPolicy,
 }
 
 impl Default for BigPipeValue {
@@ -97,6 +105,7 @@ impl BigPipeValue {
         Self {
             queue: Vec::with_capacity(100),
             length: Arc::new(AtomicU64::new(0)),
+            retention_policy: RetentionPolicy::DiskPressure,
         }
     }
 
@@ -106,6 +115,14 @@ impl BigPipeValue {
 
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
+    }
+
+    pub fn retention_policy(&self) -> &RetentionPolicy {
+        &self.retention_policy
+    }
+
+    pub fn set_retention_policy(&mut self, retention_policy: RetentionPolicy) {
+        self.retention_policy = retention_policy;
     }
 
     pub fn push(&mut self, value: ServerMessage) {

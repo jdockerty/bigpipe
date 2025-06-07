@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
@@ -7,8 +7,8 @@ use tonic::{transport::Server, Request};
 
 use bigpipe::{
     data_types::proto::{
-        message_client::MessageClient, message_server::MessageServer, ReadMessageRequest,
-        SendMessageRequest,
+        message_client::MessageClient, message_server::MessageServer,
+        namespace_server::NamespaceServer, ReadMessageRequest, SendMessageRequest,
     },
     server::BigPipeServer,
     BigPipe,
@@ -91,10 +91,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             tracing_subscriber::fmt().with_max_level(verbosity).init();
             let bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size)?;
-            let bigpipe_server = BigPipeServer::new(bigpipe);
+            let bigpipe_server = Arc::new(BigPipeServer::new(bigpipe));
 
             Server::builder()
-                .add_service(MessageServer::new(bigpipe_server))
+                .add_service(MessageServer::new(Arc::clone(&bigpipe_server)))
+                .add_service(NamespaceServer::new(Arc::clone(&bigpipe_server)))
                 .serve(SocketAddr::from_str(&addr)?)
                 .await?;
         }

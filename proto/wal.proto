@@ -1,10 +1,24 @@
 syntax = "proto3";
 
+import "namespace.proto";
+
 package wal;
 
 
-message SegmentEntry {
+message MessageEntry {
   string key = 1;
   bytes value = 2;
   int64 timestamp = 3;
+}
+
+message NamespaceEntry {
+  string key = 1;
+  namespace.RetentionPolicy retention_policy = 2;
+}
+
+message SegmentEntry {
+  oneof entry {
+    MessageEntry message_entry = 1;
+    NamespaceEntry namespace_entry = 2;
+  }
 }

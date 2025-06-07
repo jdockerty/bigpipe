@@ -39,7 +39,7 @@ impl ClientMessage {
 
     /// Consume this [`ClientMessage`] and turn it into the corresponding
     /// [`ServerMessage`].
-    pub fn into_server_message(self, timestamp: u64) -> ServerMessage {
+    pub fn into_server_message(self, timestamp: i64) -> ServerMessage {
         ServerMessage {
             key: self.key,
             value: self.value,
@@ -63,11 +63,11 @@ impl ClientMessage {
 pub struct ServerMessage {
     key: String,
     value: Bytes,
-    timestamp: u64,
+    timestamp: i64,
 }
 
 impl ServerMessage {
-    pub fn new(key: String, value: Bytes, timestamp: u64) -> Self {
+    pub fn new(key: String, value: Bytes, timestamp: i64) -> Self {
         Self {
             key,
             value,
@@ -76,7 +76,7 @@ impl ServerMessage {
     }
 
     #[cfg(test)]
-    pub fn test_message(timestamp: u64) -> Self {
+    pub fn test_message(timestamp: i64) -> Self {
         Self::new("hello".into(), "world".into(), timestamp)
     }
 
@@ -88,7 +88,7 @@ impl ServerMessage {
         self.value.clone() // cheaply clonable
     }
 
-    pub fn timestamp(&self) -> u64 {
+    pub fn timestamp(&self) -> i64 {
         self.timestamp
     }
 }
@@ -96,7 +96,7 @@ impl ServerMessage {
 pub struct WalMessageEntry {
     pub key: String,
     pub value: Bytes,
-    pub timestamp: u64,
+    pub timestamp: i64,
 }
 
 pub struct WalNamespaceEntry {
@@ -113,7 +113,7 @@ pub enum WalOperation {
 
 impl WalOperation {
     #[cfg(test)]
-    pub fn test_message(timestamp: u64) -> Self {
+    pub fn test_message(timestamp: i64) -> Self {
         WalOperation::Message(WalMessageEntry {
             key: "hello".to_string(),
             value: "world".into(),

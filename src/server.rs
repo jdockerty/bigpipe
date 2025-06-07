@@ -48,7 +48,7 @@ impl Message for Arc<BigPipeServer> {
         let timestamp = chrono::Utc::now().timestamp_micros();
         self.inner
             .lock()
-            .write(&ServerMessage::new(key, value.into(), timestamp as u64))
+            .write(&ServerMessage::new(key, value.into(), timestamp))
             .unwrap();
         Ok(Response::new(SendMessageResponse {}))
     }
@@ -159,10 +159,10 @@ mod test {
                 SendMessageRequest, SendMessageResponse,
             },
             namespace::{
-                namespace_server::Namespace, CreateNamespaceRequest, CreateNamespaceResponse,
-                UpdateNamespaceRequest, UpdateNamespaceResponse,
+                namespace_server::Namespace, CreateNamespaceRequest, UpdateNamespaceRequest,
+                UpdateNamespaceResponse,
             },
-            BigPipeValue, RetentionPolicy, ServerMessage,
+            RetentionPolicy, ServerMessage,
         },
         server::BigPipeServer,
         BigPipe,

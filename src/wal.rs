@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::HashMap;
 use prost::Message;
 use tracing::{debug, info, warn};
@@ -171,7 +171,7 @@ struct Segment {
     file: File,
     current_size: usize,
     max_size: usize,
-    buf: Vec<u8>,
+    buf: BytesMut,
 }
 
 impl Segment {
@@ -180,7 +180,7 @@ impl Segment {
         segment_path: PathBuf,
         segment_max_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let buf = Vec::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize);
+        let buf = BytesMut::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize);
         Ok(Self {
             filepath: segment_path.clone(),
             file: File::create_new(segment_path)?,
@@ -200,7 +200,7 @@ impl Segment {
         .encode_length_delimited_to_vec();
         let size = message_bytes.len();
 
-        self.buf.write_all(&message_bytes)?;
+        self.buf.put_slice(&message_bytes);
 
         if self.buf.len() >= MAX_SEGMENT_BUFFER_SIZE as usize {
             self.flush()?;

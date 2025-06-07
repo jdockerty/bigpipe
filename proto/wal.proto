@@ -8,7 +8,7 @@ package wal;
 message MessageEntry {
   string key = 1;
   bytes value = 2;
-  int64 timestamp = 3;
+  uint64 timestamp = 3;
 }
 
 message NamespaceEntry {

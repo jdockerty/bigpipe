@@ -39,7 +39,7 @@ impl ClientMessage {
 
     /// Consume this [`ClientMessage`] and turn it into the corresponding
     /// [`ServerMessage`].
-    pub fn into_server_message(self, timestamp: i64) -> ServerMessage {
+    pub fn into_server_message(self, timestamp: u64) -> ServerMessage {
         ServerMessage {
             key: self.key,
             value: self.value,
@@ -63,11 +63,11 @@ impl ClientMessage {
 pub struct ServerMessage {
     key: String,
     value: Bytes,
-    timestamp: i64,
+    timestamp: u64,
 }
 
 impl ServerMessage {
-    pub fn new(key: String, value: Bytes, timestamp: i64) -> Self {
+    pub fn new(key: String, value: Bytes, timestamp: u64) -> Self {
         Self {
             key,
             value,
@@ -76,7 +76,7 @@ impl ServerMessage {
     }
 
     #[cfg(test)]
-    pub fn test_message(timestamp: i64) -> Self {
+    pub fn test_message(timestamp: u64) -> Self {
         Self::new("hello".into(), "world".into(), timestamp)
     }
 
@@ -88,7 +88,7 @@ impl ServerMessage {
         self.value.clone() // cheaply clonable
     }
 
-    pub fn timestamp(&self) -> i64 {
+    pub fn timestamp(&self) -> u64 {
         self.timestamp
     }
 }
@@ -131,7 +131,7 @@ impl TryFrom<SegmentEntry> for WalOperation {
                     Ok(WalOperation::Message(WalMessageEntry {
                         key: message.key,
                         value: message.value.into(),
-                        timestamp: message.timestamp as u64, // TODO!
+                        timestamp: message.timestamp,
                     }))
                 }
                 segment_entry::Entry::NamespaceEntry(namespace) => {
@@ -157,7 +157,7 @@ impl TryFrom<WalOperation> for SegmentEntry {
                 entry: Some(segment_entry::Entry::MessageEntry(wal::MessageEntry {
                     key: message.key,
                     value: message.value.into(),
-                    timestamp: message.timestamp as i64, // TODO!
+                    timestamp: message.timestamp,
                 })),
             }),
             WalOperation::Namespace(namespace) => Ok(SegmentEntry {

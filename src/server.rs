@@ -48,7 +48,7 @@ impl Message for Arc<BigPipeServer> {
         let timestamp = chrono::Utc::now().timestamp_micros();
         self.inner
             .lock()
-            .write(&ServerMessage::new(key, value.into(), timestamp))
+            .write(&ServerMessage::new(key, value.into(), timestamp as u64))
             .unwrap();
         Ok(Response::new(SendMessageResponse {}))
     }

@@ -1,5 +1,6 @@
 use std::{pin::Pin, sync::Arc};
 
+use hashbrown::hash_map::Entry;
 use parking_lot::Mutex;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Code, Request, Response, Status};
@@ -10,9 +11,9 @@ use crate::{
         proto::{
             message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
             CreateNamespaceResponse, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
-            SendMessageResponse,
+            SendMessageResponse, UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
-        ServerMessage,
+        RetentionPolicy, ServerMessage,
     },
     BigPipe,
 };
@@ -97,9 +98,43 @@ impl Message for Arc<BigPipeServer> {
 impl Namespace for Arc<BigPipeServer> {
     async fn create(
         &self,
-        _request: Request<CreateNamespaceRequest>,
+        request: Request<CreateNamespaceRequest>,
     ) -> Result<Response<CreateNamespaceResponse>, Status> {
-        unimplemented!();
+        let CreateNamespaceRequest {
+            key,
+            retention_policy: _,
+        } = request.into_inner();
+
+        match self.inner.lock().inner.lock().get(&key) {
+            Some(_) => Err(Status::new(
+                Code::AlreadyExists,
+                format!("{key} already exists"),
+            )),
+            None => Ok(Response::new(CreateNamespaceResponse { key })),
+        }
+    }
+
+    async fn update(
+        &self,
+        request: Request<UpdateNamespaceRequest>,
+    ) -> Result<Response<UpdateNamespaceResponse>, Status> {
+        let UpdateNamespaceRequest {
+            key,
+            retention_policy,
+        } = request.into_inner();
+
+        let retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
+
+        match self.inner.lock().inner.lock().get_key_value_mut(&key) {
+            Some((_, value)) => {
+                value.set_retention_policy(retention_policy);
+                Ok(Response::new(UpdateNamespaceResponse { key }))
+            }
+            None => Err(Status::new(
+                Code::NotFound,
+                format!("cannot update non-existent namespace '{key}'"),
+            )),
+        }
     }
 }
 

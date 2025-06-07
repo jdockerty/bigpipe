@@ -1,16 +1,22 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
+use wal::{segment_entry, SegmentEntry};
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
 
-pub mod proto {
-    use tonic::include_proto;
-    include_proto!("message");
-    include_proto!("namespace");
-    include_proto!("wal");
+pub mod message {
+    tonic::include_proto!("message");
+}
+
+pub mod namespace {
+    tonic::include_proto!("namespace");
+}
+
+pub mod wal {
+    tonic::include_proto!("wal");
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, prost::Enumeration)]

@@ -4,6 +4,7 @@ package namespace;
 
 service Namespace {
   rpc Create (CreateNamespaceRequest) returns (CreateNamespaceResponse) {}
+  rpc Update (UpdateNamespaceRequest) returns (UpdateNamespaceResponse) {}
 }
 
 enum RetentionPolicy {
@@ -20,3 +21,11 @@ message CreateNamespaceResponse {
   string key = 1;
 }
 
+message UpdateNamespaceRequest {
+  string key = 1;
+  RetentionPolicy retention_policy = 2;
+}
+
+message UpdateNamespaceResponse {
+  string key = 1;
+}

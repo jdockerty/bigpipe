@@ -118,7 +118,7 @@ mod test {
                 message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
                 ReadMessageRequest, ReadMessageResponse, SendMessageRequest, SendMessageResponse,
             },
-            ServerMessage,
+            RetentionPolicy, ServerMessage,
         },
         server::BigPipeServer,
         BigPipe,
@@ -231,6 +231,7 @@ mod test {
 
         let namespace = CreateNamespaceRequest {
             key: "hello".to_string(),
+            retention_policy: RetentionPolicy::Ttl as i32,
         };
         let _ = server.create(Request::new(namespace)).await;
     }

@@ -6,9 +6,17 @@ service Namespace {
   rpc Create (CreateNamespaceRequest) returns (CreateNamespaceResponse) {}
 }
 
-message CreateNamespaceRequest {
-  string key = 1;
+enum RetentionPolicy {
+  Ttl = 0;
+  DiskPressure = 1;
 }
 
-message CreateNamespaceResponse {}
+message CreateNamespaceRequest {
+  string key = 1;
+  RetentionPolicy retention_policy = 2;
+}
+
+message CreateNamespaceResponse {
+  string key = 1;
+}
 

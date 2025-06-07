@@ -13,6 +13,12 @@ pub mod proto {
     include_proto!("wal");
 }
 
+#[derive(prost::Enumeration)]
+pub enum RetentionPolicy {
+    Ttl = 0,
+    DiskPressure = 1,
+}
+
 /// A message sent by a client.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientMessage {

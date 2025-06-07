@@ -7,10 +7,13 @@ use tracing::{debug, error, info};
 
 use crate::{
     data_types::{
-        proto::{
-            message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
-            CreateNamespaceResponse, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
-            SendMessageResponse, UpdateNamespaceRequest, UpdateNamespaceResponse,
+        message::{
+            message_server::Message, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
+            SendMessageResponse,
+        },
+        namespace::{
+            namespace_server::Namespace, CreateNamespaceRequest, CreateNamespaceResponse,
+            UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
         BigPipeValue, RetentionPolicy, ServerMessage,
     },
@@ -151,12 +154,15 @@ mod test {
 
     use crate::{
         data_types::{
-            proto::{
-                message_server::Message, namespace_server::Namespace, CreateNamespaceRequest,
-                ReadMessageRequest, ReadMessageResponse, RetentionPolicy, SendMessageRequest,
-                SendMessageResponse, UpdateNamespaceRequest, UpdateNamespaceResponse,
+            message::{
+                message_server::Message, ReadMessageRequest, ReadMessageResponse,
+                SendMessageRequest, SendMessageResponse,
             },
-            ServerMessage,
+            namespace::{
+                namespace_server::Namespace, CreateNamespaceRequest, CreateNamespaceResponse,
+                UpdateNamespaceRequest, UpdateNamespaceResponse,
+            },
+            BigPipeValue, RetentionPolicy, ServerMessage,
         },
         server::BigPipeServer,
         BigPipe,

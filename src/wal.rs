@@ -8,8 +8,8 @@ use prost::Message;
 use tracing::{debug, error, info};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::data_types::proto::SegmentEntry;
-use crate::data_types::BigPipeValue;
+use crate::data_types::wal::{segment_entry, SegmentEntry};
+use crate::data_types::{BigPipeValue, WalOperation};
 use crate::ServerMessage;
 
 pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB
@@ -77,27 +77,32 @@ impl Wal {
 
                 let mut bytes = Bytes::from(buf);
                 match SegmentEntry::decode(&mut bytes) {
-                    Ok(entry) => {
-                        messages
-                            .entry(entry.key.to_string())
-                            .and_modify(|occupied_messages: &mut BigPipeValue| {
-                                let entry = entry.clone();
-                                occupied_messages.push(ServerMessage::new(
-                                    entry.key,
-                                    entry.value.into(),
-                                    entry.timestamp,
-                                ))
-                            })
-                            .or_insert_with(|| {
-                                let mut messages = BigPipeValue::new();
-                                messages.push(ServerMessage::new(
-                                    entry.key,
-                                    entry.value.into(),
-                                    entry.timestamp,
-                                ));
-                                messages
-                            });
-                    }
+                    Ok(entry) => match entry.entry.expect("segment entry is encoded") {
+                        segment_entry::Entry::MessageEntry(message_entry) => {
+                            messages
+                                .entry(message_entry.key.to_string())
+                                .and_modify(|occupied_messages: &mut BigPipeValue| {
+                                    let message_entry = message_entry.clone();
+                                    occupied_messages.push(ServerMessage::new(
+                                        message_entry.key,
+                                        message_entry.value.into(),
+                                        message_entry.timestamp,
+                                    ))
+                                })
+                                .or_insert_with(|| {
+                                    let mut messages = BigPipeValue::new();
+                                    messages.push(ServerMessage::new(
+                                        message_entry.key,
+                                        message_entry.value.into(),
+                                        message_entry.timestamp,
+                                    ));
+                                    messages
+                                });
+                        }
+                        segment_entry::Entry::NamespaceEntry(namespace) => {
+                            messages.entry(namespace.key).or_default();
+                        }
+                    },
                     Err(e) => {
                         error!(?e, "wal decoding error");
                         break;
@@ -110,11 +115,11 @@ impl Wal {
     }
 
     /// Write a message into the write-ahead log.
-    pub fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
+    pub fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
         if self.active_segment.current_size >= self.active_segment.max_size {
             self.rotate()?;
         }
-        self.active_segment.write(message)
+        self.active_segment.write(op)
     }
 
     #[allow(dead_code)]
@@ -215,16 +220,13 @@ impl Segment {
     }
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
-    fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
-        let message_bytes = SegmentEntry {
-            key: message.key().to_string(),
-            value: message.value().to_vec(),
-            timestamp: message.timestamp(),
-        }
-        .encode_length_delimited_to_vec();
-        let size = message_bytes.len();
+    fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
+        let wal_operation = SegmentEntry::try_from(op)
+            .unwrap()
+            .encode_length_delimited_to_vec();
+        let size = wal_operation.len();
 
-        self.buf.put_slice(&message_bytes);
+        self.buf.put_slice(&wal_operation);
 
         if self.buf.len() >= MAX_SEGMENT_BUFFER_SIZE as usize {
             self.flush()?;

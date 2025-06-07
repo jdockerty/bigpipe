@@ -1,12 +1,14 @@
-use std::convert::TryInto;
-use std::io::{BufReader, Read};
+use std::io::{self, BufReader, Read};
 use std::path::Path;
 use std::{fs::File, io::Write, path::PathBuf};
 
+use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::HashMap;
-use tracing::{debug, info};
+use prost::Message;
+use tracing::{debug, error, info};
 use walkdir::{DirEntry, WalkDir};
 
+use crate::data_types::proto::SegmentEntry;
 use crate::data_types::BigPipeValue;
 use crate::ServerMessage;
 
@@ -66,24 +68,40 @@ impl Wal {
 
         let mut messages = HashMap::with_capacity(1000);
         for (_, path) in segment_paths {
-            let segment_file = std::fs::File::open(path).unwrap();
-            let mut reader = BufReader::new(segment_file);
-            loop {
-                match ServerMessage::try_from(&mut reader as &mut dyn Read) {
-                    Ok(msg) => {
+            let segment = std::fs::File::open(&path).unwrap();
+            let mut reader = BufReader::new(segment);
+
+            while let Some(len) = read_varint(&mut reader).unwrap() {
+                let mut buf = vec![0u8; len];
+                reader.read_exact(&mut buf).unwrap();
+
+                let mut bytes = Bytes::from(buf);
+                match SegmentEntry::decode(&mut bytes) {
+                    Ok(entry) => {
                         messages
-                            .entry(msg.key().to_string())
+                            .entry(entry.key.to_string())
                             .and_modify(|occupied_messages: &mut BigPipeValue| {
-                                occupied_messages.push(msg.clone())
+                                let entry = entry.clone();
+                                occupied_messages.push(ServerMessage::new(
+                                    entry.key,
+                                    entry.value.into(),
+                                    entry.timestamp,
+                                ))
                             })
                             .or_insert_with(|| {
                                 let mut messages = BigPipeValue::new();
-                                messages.push(msg);
+                                messages.push(ServerMessage::new(
+                                    entry.key,
+                                    entry.value.into(),
+                                    entry.timestamp,
+                                ));
                                 messages
                             });
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                    Err(e) => panic!("{e}"),
+                    Err(e) => {
+                        error!(?e, "wal decoding error");
+                        break;
+                    }
                 }
             }
         }
@@ -134,6 +152,30 @@ impl Wal {
     }
 }
 
+// Adapted from <https://docs.rs/wyre/latest/src/wyre/lib.rs.html#53-70>
+fn read_varint<R: Read>(reader: &mut R) -> io::Result<Option<usize>> {
+    let mut buf = [0u8; 1];
+    let mut shift = 0;
+    let mut result: usize = 0;
+
+    for _ in 0..10 {
+        if reader.read(&mut buf)? == 0 {
+            return Ok(None); // EOF
+        }
+        let byte = buf[0];
+        result |= ((byte & 0x7F) as usize) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(Some(result));
+        }
+        shift += 7;
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "varint too long",
+    ))
+}
+
 fn parse_segment_id(entry: &DirEntry) -> u64 {
     debug!(?entry);
     entry
@@ -153,7 +195,7 @@ struct Segment {
     file: File,
     current_size: usize,
     max_size: usize,
-    buf: Vec<u8>,
+    buf: BytesMut,
 }
 
 impl Segment {
@@ -162,7 +204,7 @@ impl Segment {
         segment_path: PathBuf,
         segment_max_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let buf = Vec::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize);
+        let buf = BytesMut::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize);
         Ok(Self {
             filepath: segment_path.clone(),
             file: File::create_new(segment_path)?,
@@ -174,10 +216,15 @@ impl Segment {
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
     fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
-        let message_bytes: Vec<u8> = message.try_into()?;
+        let message_bytes = SegmentEntry {
+            key: message.key().to_string(),
+            value: message.value().to_vec(),
+            timestamp: message.timestamp(),
+        }
+        .encode_length_delimited_to_vec();
         let size = message_bytes.len();
 
-        self.buf.write_all(&message_bytes)?;
+        self.buf.put_slice(&message_bytes);
 
         if self.buf.len() >= MAX_SEGMENT_BUFFER_SIZE as usize {
             self.flush()?;
@@ -248,10 +295,10 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64)).unwrap();
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(16)).unwrap();
 
         // Known size of the write
-        let server_msg_size = 34;
+        let server_msg_size = 15;
 
         for _ in 0..=2 {
             wal.write(&ServerMessage::test_message(0)).unwrap();
@@ -295,7 +342,7 @@ mod test {
         wal.flush().unwrap();
 
         let (last_segment_id, messages) = Wal::replay(dir.path()).unwrap();
-        assert_eq!(last_segment_id, 49);
+        assert_eq!(last_segment_id, 24);
         assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
 
         let contained_messages = messages.get("hello").unwrap().clone();

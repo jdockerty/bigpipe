@@ -8,7 +8,7 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 use tracing::debug;
 
-use data_types::{BigPipeValue, ServerMessage};
+use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
 use wal::{Wal, WAL_DEFAULT_ID};
 
 #[derive(Debug)]
@@ -85,7 +85,13 @@ impl BigPipe {
 
     /// Write to the underlying WAL.
     pub fn wal_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.wal.write(message)?;
+        // TODO: keep this as a WalOperation and allow callee to decide on inbound op?
+        self.wal
+            .write(data_types::WalOperation::Message(WalMessageEntry {
+                key: message.key().to_string(),
+                value: message.value(),
+                timestamp: message.timestamp(),
+            }))?;
         Ok(())
     }
 }

@@ -8,8 +8,9 @@ use prost::Message;
 use tracing::{debug, error, info};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::data_types::proto::SegmentEntry;
-use crate::data_types::BigPipeValue;
+use crate::data_types::wal::segment_entry::Entry as EntryProto;
+use crate::data_types::wal::SegmentEntry as SegmentEntryProto;
+use crate::data_types::{BigPipeValue, RetentionPolicy, WalOperation};
 use crate::ServerMessage;
 
 pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB
@@ -76,28 +77,48 @@ impl Wal {
                 reader.read_exact(&mut buf).unwrap();
 
                 let mut bytes = Bytes::from(buf);
-                match SegmentEntry::decode(&mut bytes) {
-                    Ok(entry) => {
-                        messages
-                            .entry(entry.key.to_string())
-                            .and_modify(|occupied_messages: &mut BigPipeValue| {
-                                let entry = entry.clone();
-                                occupied_messages.push(ServerMessage::new(
-                                    entry.key,
-                                    entry.value.into(),
-                                    entry.timestamp,
-                                ))
-                            })
-                            .or_insert_with(|| {
-                                let mut messages = BigPipeValue::new();
-                                messages.push(ServerMessage::new(
-                                    entry.key,
-                                    entry.value.into(),
-                                    entry.timestamp,
-                                ));
-                                messages
-                            });
-                    }
+                match SegmentEntryProto::decode(&mut bytes) {
+                    Ok(entry) => match entry.entry.expect("segment entry is encoded") {
+                        EntryProto::MessageEntry(message_entry) => {
+                            messages
+                                .entry(message_entry.key.to_string())
+                                .and_modify(|occupied_messages: &mut BigPipeValue| {
+                                    let message_entry = message_entry.clone();
+                                    occupied_messages.push(ServerMessage::new(
+                                        message_entry.key,
+                                        message_entry.value.into(),
+                                        message_entry.timestamp,
+                                    ))
+                                })
+                                .or_insert_with(|| {
+                                    let mut messages = BigPipeValue::new();
+                                    messages.push(ServerMessage::new(
+                                        message_entry.key,
+                                        message_entry.value.into(),
+                                        message_entry.timestamp,
+                                    ));
+                                    messages
+                                });
+                        }
+                        EntryProto::NamespaceEntry(namespace) => {
+                            messages
+                                .entry(namespace.key)
+                                .and_modify(|v| {
+                                    v.set_retention_policy(
+                                        RetentionPolicy::try_from(namespace.retention_policy)
+                                            .unwrap(),
+                                    )
+                                })
+                                .or_insert_with(|| {
+                                    let mut value = BigPipeValue::new();
+                                    value.set_retention_policy(
+                                        RetentionPolicy::try_from(namespace.retention_policy)
+                                            .unwrap(),
+                                    );
+                                    value
+                                });
+                        }
+                    },
                     Err(e) => {
                         error!(?e, "wal decoding error");
                         break;
@@ -110,11 +131,11 @@ impl Wal {
     }
 
     /// Write a message into the write-ahead log.
-    pub fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
+    pub fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
         if self.active_segment.current_size >= self.active_segment.max_size {
             self.rotate()?;
         }
-        self.active_segment.write(message)
+        self.active_segment.write(op)
     }
 
     #[allow(dead_code)]
@@ -215,16 +236,13 @@ impl Segment {
     }
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
-    fn write(&mut self, message: &ServerMessage) -> Result<usize, Box<dyn std::error::Error>> {
-        let message_bytes = SegmentEntry {
-            key: message.key().to_string(),
-            value: message.value().to_vec(),
-            timestamp: message.timestamp(),
-        }
-        .encode_length_delimited_to_vec();
-        let size = message_bytes.len();
+    fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
+        let wal_operation = SegmentEntryProto::try_from(op)
+            .unwrap()
+            .encode_length_delimited_to_vec();
+        let size = wal_operation.len();
 
-        self.buf.put_slice(&message_bytes);
+        self.buf.put_slice(&wal_operation);
 
         if self.buf.len() >= MAX_SEGMENT_BUFFER_SIZE as usize {
             self.flush()?;
@@ -254,6 +272,8 @@ impl Segment {
 mod test {
     use tempfile::TempDir;
 
+    use crate::data_types::{RetentionPolicy, WalNamespaceEntry};
+
     use super::*;
 
     #[test]
@@ -280,7 +300,7 @@ mod test {
 
         let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
 
-        wal.write(&ServerMessage::test_message(0)).unwrap();
+        wal.write(WalOperation::test_message(0)).unwrap();
         wal.flush().unwrap();
 
         assert!(wal.active_segment_path().exists());
@@ -295,13 +315,13 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(16)).unwrap();
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(24)).unwrap();
 
         // Known size of the write
-        let server_msg_size = 15;
+        let server_msg_size = 17;
 
         for _ in 0..=2 {
-            wal.write(&ServerMessage::test_message(0)).unwrap();
+            wal.write(WalOperation::test_message(0)).unwrap();
             wal.flush().unwrap();
         }
 
@@ -336,7 +356,7 @@ mod test {
         .unwrap();
 
         for i in 0..100 {
-            wal.write(&ServerMessage::test_message(i)).unwrap();
+            wal.write(WalOperation::test_message(i)).unwrap();
             wal.active_segment.flush().unwrap();
         }
         wal.flush().unwrap();
@@ -370,5 +390,40 @@ mod test {
             .is_ok(),
             "Segment should be +1 from last"
         );
+    }
+
+    #[test]
+    fn namespace_creation_durable() {
+        let dir = TempDir::new().unwrap();
+
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
+        let namespace = "my_new_namespace";
+
+        wal.write(WalOperation::Namespace(WalNamespaceEntry {
+            key: namespace.to_string(),
+            retention_policy: RetentionPolicy::Ttl, // using the non-default policy
+        }))
+        .unwrap();
+        wal.flush().unwrap();
+
+        drop(wal);
+
+        let (_, inner) = Wal::replay(dir.path()).unwrap();
+        assert_eq!(inner.keys().len(), 1);
+
+        let mut expected = BigPipeValue::new();
+        expected.set_retention_policy(RetentionPolicy::Ttl);
+
+        let got = inner.get(namespace).unwrap().clone();
+        assert_eq!(got.is_empty(), expected.is_empty());
+        assert!(
+            got.get(0).is_none(),
+            "Namespace was only created, no values are expected"
+        );
+        assert_eq!(got.retention_policy(), expected.retention_policy());
+
+        // TODO: expand with deletion:
+        //  - adding entries shows those entries on replay
+        //  - removal yields no namespace at all
     }
 }

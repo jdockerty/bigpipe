@@ -6,9 +6,12 @@ use tokio_stream::StreamExt;
 use tonic::{transport::Server, Request};
 
 use bigpipe::{
-    data_types::proto::{
-        message_client::MessageClient, message_server::MessageServer,
-        namespace_server::NamespaceServer, ReadMessageRequest, SendMessageRequest,
+    data_types::{
+        message::{
+            message_client::MessageClient, message_server::MessageServer, ReadMessageRequest,
+            SendMessageRequest,
+        },
+        namespace::namespace_server::NamespaceServer,
     },
     server::BigPipeServer,
     BigPipe,

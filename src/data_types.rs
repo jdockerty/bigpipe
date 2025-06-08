@@ -52,9 +52,9 @@ impl ClientMessage {
         &self.key
     }
 
-    /// Get a reference to the underlying value.
-    pub fn value(&self) -> &[u8] {
-        &self.value
+    /// Get the contained value bytes.
+    pub fn value(&self) -> Bytes {
+        self.value.clone()
     }
 }
 

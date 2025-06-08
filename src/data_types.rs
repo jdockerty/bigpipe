@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use wal::{segment_entry, SegmentEntry};
+use wal::{segment_entry, SegmentEntry as SegmentEntryProto};
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -122,9 +122,9 @@ impl WalOperation {
     }
 }
 
-impl TryFrom<SegmentEntry> for WalOperation {
+impl TryFrom<SegmentEntryProto> for WalOperation {
     type Error = Box<dyn std::error::Error>;
-    fn try_from(value: SegmentEntry) -> Result<Self, Self::Error> {
+    fn try_from(value: SegmentEntryProto) -> Result<Self, Self::Error> {
         match value.entry {
             Some(entry) => match entry {
                 segment_entry::Entry::MessageEntry(message) => {
@@ -149,18 +149,18 @@ impl TryFrom<SegmentEntry> for WalOperation {
     }
 }
 
-impl TryFrom<WalOperation> for SegmentEntry {
+impl TryFrom<WalOperation> for SegmentEntryProto {
     type Error = Box<dyn std::error::Error>;
     fn try_from(value: WalOperation) -> Result<Self, Self::Error> {
         match value {
-            WalOperation::Message(message) => Ok(SegmentEntry {
+            WalOperation::Message(message) => Ok(SegmentEntryProto {
                 entry: Some(segment_entry::Entry::MessageEntry(wal::MessageEntry {
                     key: message.key,
                     value: message.value.into(),
                     timestamp: message.timestamp,
                 })),
             }),
-            WalOperation::Namespace(namespace) => Ok(SegmentEntry {
+            WalOperation::Namespace(namespace) => Ok(SegmentEntryProto {
                 entry: Some(segment_entry::Entry::NamespaceEntry(wal::NamespaceEntry {
                     key: namespace.key,
                     retention_policy: namespace.retention_policy as i32,

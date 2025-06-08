@@ -8,7 +8,8 @@ use prost::Message;
 use tracing::{debug, error, info};
 use walkdir::{DirEntry, WalkDir};
 
-use crate::data_types::wal::{segment_entry, SegmentEntry};
+use crate::data_types::wal::segment_entry::Entry as EntryProto;
+use crate::data_types::wal::SegmentEntry as SegmentEntryProto;
 use crate::data_types::{BigPipeValue, RetentionPolicy, WalOperation};
 use crate::ServerMessage;
 
@@ -76,9 +77,9 @@ impl Wal {
                 reader.read_exact(&mut buf).unwrap();
 
                 let mut bytes = Bytes::from(buf);
-                match SegmentEntry::decode(&mut bytes) {
+                match SegmentEntryProto::decode(&mut bytes) {
                     Ok(entry) => match entry.entry.expect("segment entry is encoded") {
-                        segment_entry::Entry::MessageEntry(message_entry) => {
+                        EntryProto::MessageEntry(message_entry) => {
                             messages
                                 .entry(message_entry.key.to_string())
                                 .and_modify(|occupied_messages: &mut BigPipeValue| {
@@ -99,7 +100,7 @@ impl Wal {
                                     messages
                                 });
                         }
-                        segment_entry::Entry::NamespaceEntry(namespace) => {
+                        EntryProto::NamespaceEntry(namespace) => {
                             messages
                                 .entry(namespace.key)
                                 .and_modify(|v| {
@@ -236,7 +237,7 @@ impl Segment {
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
     fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
-        let wal_operation = SegmentEntry::try_from(op)
+        let wal_operation = SegmentEntryProto::try_from(op)
             .unwrap()
             .encode_length_delimited_to_vec();
         let size = wal_operation.len();

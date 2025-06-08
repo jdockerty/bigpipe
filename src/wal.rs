@@ -9,7 +9,7 @@ use tracing::{debug, error, info};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::data_types::wal::{segment_entry, SegmentEntry};
-use crate::data_types::{BigPipeValue, WalOperation};
+use crate::data_types::{BigPipeValue, RetentionPolicy, WalOperation};
 use crate::ServerMessage;
 
 pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB
@@ -100,7 +100,22 @@ impl Wal {
                                 });
                         }
                         segment_entry::Entry::NamespaceEntry(namespace) => {
-                            messages.entry(namespace.key).or_default();
+                            messages
+                                .entry(namespace.key)
+                                .and_modify(|v| {
+                                    v.set_retention_policy(
+                                        RetentionPolicy::try_from(namespace.retention_policy)
+                                            .unwrap(),
+                                    )
+                                })
+                                .or_insert_with(|| {
+                                    let mut value = BigPipeValue::new();
+                                    value.set_retention_policy(
+                                        RetentionPolicy::try_from(namespace.retention_policy)
+                                            .unwrap(),
+                                    );
+                                    value
+                                });
                         }
                     },
                     Err(e) => {
@@ -256,6 +271,8 @@ impl Segment {
 mod test {
     use tempfile::TempDir;
 
+    use crate::data_types::{RetentionPolicy, WalNamespaceEntry};
+
     use super::*;
 
     #[test]
@@ -372,5 +389,40 @@ mod test {
             .is_ok(),
             "Segment should be +1 from last"
         );
+    }
+
+    #[test]
+    fn namespace_creation_durable() {
+        let dir = TempDir::new().unwrap();
+
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
+        let namespace = "my_new_namespace";
+
+        wal.write(WalOperation::Namespace(WalNamespaceEntry {
+            key: namespace.to_string(),
+            retention_policy: RetentionPolicy::Ttl, // using the non-default policy
+        }))
+        .unwrap();
+        wal.flush().unwrap();
+
+        drop(wal);
+
+        let (_, inner) = Wal::replay(dir.path()).unwrap();
+        assert_eq!(inner.keys().len(), 1);
+
+        let mut expected = BigPipeValue::new();
+        expected.set_retention_policy(RetentionPolicy::Ttl);
+
+        let got = inner.get(namespace).unwrap().clone();
+        assert_eq!(got.is_empty(), expected.is_empty());
+        assert!(
+            got.get(0).is_none(),
+            "Namespace was only created, no values are expected"
+        );
+        assert_eq!(got.retention_policy(), expected.retention_policy());
+
+        // TODO: expand with deletion:
+        //  - adding entries shows those entries on replay
+        //  - removal yields no namespace at all
     }
 }

@@ -11,7 +11,11 @@ use bigpipe::{
             message_client::MessageClient, message_server::MessageServer, ReadMessageRequest,
             SendMessageRequest,
         },
-        namespace::namespace_server::NamespaceServer,
+        namespace::{
+            namespace_client::NamespaceClient, namespace_server::NamespaceServer,
+            CreateNamespaceRequest,
+        },
+        RetentionPolicy,
     },
     server::BigPipeServer,
     BigPipe,
@@ -26,6 +30,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Write a message into a running bigpipe server.
+    ///
+    /// If the namespace which is being written to does not
+    /// exist, it is eagerly created with default values.
     Write {
         key: String,
         value: String,
@@ -33,6 +40,15 @@ enum Commands {
         #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "http://0.0.0.0:7050")]
         addr: String,
     },
+    /// Create a namespace that can begin to accept messages.
+    Create {
+        namespace: String,
+        policy: RetentionPolicy,
+        /// Address of the server to write to.
+        #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "http://0.0.0.0:7050")]
+        addr: String,
+    },
+    /// Read messages from a bigpipe server.
     Read {
         key: String,
         offset: u64,
@@ -64,6 +80,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.commands {
+        Commands::Create {
+            namespace,
+            policy,
+            addr,
+        } => {
+            let mut client = NamespaceClient::connect(addr).await?;
+
+            match client
+                .create(CreateNamespaceRequest {
+                    key: namespace.clone(),
+                    retention_policy: policy as i32,
+                })
+                .await
+            {
+                Ok(_) => eprintln!("{namespace} created"),
+                Err(e) if matches!(e.code(), tonic::Code::AlreadyExists) => {
+                    return Err("{namespace} already exists".to_string().into())
+                }
+                Err(e) => return Err(format!("unknown error from server: {e}").into()),
+            }
+        }
         Commands::Read { key, offset, addr } => {
             let mut client = MessageClient::connect(addr).await?;
 

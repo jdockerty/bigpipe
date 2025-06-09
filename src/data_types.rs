@@ -19,7 +19,7 @@ pub mod wal {
     tonic::include_proto!("wal");
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, prost::Enumeration)]
+#[derive(Debug, Clone, PartialEq, Eq, prost::Enumeration, clap::ValueEnum)]
 pub enum RetentionPolicy {
     Ttl = 0,
     DiskPressure = 1,

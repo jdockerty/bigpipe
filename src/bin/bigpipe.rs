@@ -80,6 +80,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.commands {
+        Commands::Create {
+            namespace,
+            policy,
+            addr,
+        } => {
+            let mut client = NamespaceClient::connect(addr).await?;
+
+            match client
+                .create(CreateNamespaceRequest {
+                    key: namespace.clone(),
+                    retention_policy: policy as i32,
+                })
+                .await
+            {
+                Ok(_) => eprintln!("{namespace} created"),
+                Err(e) if matches!(e.code(), tonic::Code::AlreadyExists) => {
+                    return Err("{namespace} already exists".to_string().into())
+                }
+                Err(e) => return Err(format!("unknown error from server: {e}").into()),
+            }
+        }
         Commands::Read { key, offset, addr } => {
             let mut client = MessageClient::connect(addr).await?;
 

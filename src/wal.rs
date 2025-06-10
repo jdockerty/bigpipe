@@ -173,6 +173,7 @@ impl Wal {
         );
 
         self.active_segment = Segment::try_new(next_path, Some(self.active_segment.max_size))?;
+        // Push the previously held 'current' only once the new segment is opened
         self.closed_segments.push(current_id);
         Ok(())
     }

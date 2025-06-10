@@ -23,6 +23,7 @@ pub(crate) const WAL_DEFAULT_ID: u64 = 0;
 pub struct Wal {
     id: u64,
     active_segment: Segment,
+    closed_segments: Vec<u64>,
     directory: PathBuf,
 }
 
@@ -32,6 +33,13 @@ impl Wal {
         directory: PathBuf,
         segment_max_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        // When non-zero segments are provided, a system invariant
+        // here assumes that the IDs are monotonically increasing.
+        //
+        // In other words, if '5' is given, segments 0..=4 MUST
+        // already exists.
+        let closed_segments = (0..id).collect::<Vec<_>>();
+
         Ok(Self {
             id,
             directory: directory.clone(),
@@ -39,6 +47,7 @@ impl Wal {
                 directory.join(format!("{id}{WAL_EXTENSION}")),
                 segment_max_size,
             )?,
+            closed_segments,
         })
     }
 
@@ -164,12 +173,19 @@ impl Wal {
         );
 
         self.active_segment = Segment::try_new(next_path, Some(self.active_segment.max_size))?;
+        // Push the previously held 'current' only once the new segment is opened
+        self.closed_segments.push(current_id);
         Ok(())
     }
 
     #[allow(dead_code)]
     pub fn active_segment_path(&self) -> &Path {
         self.active_segment.path()
+    }
+
+    #[allow(dead_code)]
+    pub fn closed_segments(&self) -> &[u64] {
+        &self.closed_segments
     }
 }
 
@@ -425,5 +441,21 @@ mod test {
         // TODO: expand with deletion:
         //  - adding entries shows those entries on replay
         //  - removal yields no namespace at all
+    }
+
+    #[test]
+    fn closed_segments() {
+        let dir = TempDir::new().unwrap();
+
+        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64)).unwrap();
+
+        for i in 0..10 {
+            wal.write(WalOperation::test_message(i)).unwrap();
+            wal.flush().unwrap();
+        }
+        assert_eq!(wal.closed_segments().len(), 2);
+
+        let wal = Wal::try_new(10, dir.path().to_path_buf(), None).unwrap();
+        assert_eq!(wal.closed_segments().len(), 10); // 0-base index, 0..=9 is 10 closed segments
     }
 }

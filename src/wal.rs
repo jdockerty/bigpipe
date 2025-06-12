@@ -21,6 +21,7 @@ const MAX_SEGMENT_BUFFER_SIZE: u16 = 8192; // 8 KiB
 const WAL_EXTENSION: &str = "-bp.wal";
 pub(crate) const WAL_DEFAULT_ID: u64 = 0;
 
+#[derive(Debug)]
 pub struct MultiWal {
     partitions: Arc<Mutex<HashMap<String, Wal>>>,
     root_directory: PathBuf,
@@ -65,6 +66,19 @@ impl MultiWal {
                 wal.write(op).unwrap(); // Ensure that the inbound op is not lost
                 wal
             });
+    }
+
+    pub fn replay<P: AsRef<Path>>(directory: P) {
+        let mut highest_segment_id = 0;
+        for entry in WalkDir::new(directory)
+            .max_depth(1) // current directory only
+            .into_iter()
+            .filter_map(|e| e.ok())
+            // Directories are made per key
+            .filter(|e| e.path().is_dir())
+        {
+            todo!()
+        }
     }
 }
 
@@ -538,5 +552,22 @@ mod test {
             inner.get("hello").unwrap().get_range(0),
             vec![ServerMessage::new("hello".to_string(), "world".into(), 10)]
         );
+    }
+
+    #[test]
+    fn multi_replay() {
+        let dir = TempDir::new().unwrap();
+        let multi = MultiWal::new(dir.path().to_path_buf());
+
+        multi.write("foo", WalOperation::test_message(10));
+        multi.write("bar", WalOperation::test_message(20));
+
+        multi.flush("foo");
+        multi.flush("bar");
+
+        drop(multi);
+
+        MultiWal::replay(dir.path());
+        todo!();
     }
 }

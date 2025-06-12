@@ -42,14 +42,7 @@ impl MultiWal {
         wal_dir
     }
 
-    pub fn add_key(&self, key: &str) {
-        let wal_dir = self.create_wal_directory(key);
-        self.partitions.lock().insert(
-            key.to_string(),
-            Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap(),
-        );
-    }
-
+    /// Flush the [`Wal`] of a particular `key`.
     pub(crate) fn flush(&self, key: &str) {
         self.partitions
             .lock()
@@ -62,10 +55,16 @@ impl MultiWal {
     pub fn write(&self, key: &str, op: WalOperation) {
         self.partitions
             .lock()
-            .get_mut(key)
-            .unwrap()
-            .write(op)
-            .unwrap();
+            .entry(key.to_string())
+            .and_modify(|wal| {
+                wal.write(op.clone()).unwrap();
+            })
+            .or_insert_with(|| {
+                let wal_dir = self.create_wal_directory(key);
+                let mut wal = Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap();
+                wal.write(op).unwrap(); // Ensure that the inbound op is not lost
+                wal
+            });
     }
 }
 
@@ -527,7 +526,6 @@ mod test {
         let dir = TempDir::new().unwrap();
         let multi = MultiWal::new(dir.path().to_path_buf());
 
-        multi.add_key("hello"); // TODO: wire into normal write
         multi.write("hello", WalOperation::test_message(10));
         multi.flush("hello");
 

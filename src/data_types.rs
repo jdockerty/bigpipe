@@ -93,17 +93,20 @@ impl ServerMessage {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct WalMessageEntry {
     pub key: String,
     pub value: Bytes,
     pub timestamp: i64,
 }
 
+#[derive(Debug, Clone)]
 pub struct WalNamespaceEntry {
     pub key: String,
     pub retention_policy: RetentionPolicy,
 }
 
+#[derive(Debug, Clone)]
 pub enum WalOperation {
     /// Message ingest
     Message(WalMessageEntry),

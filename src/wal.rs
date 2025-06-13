@@ -21,6 +21,7 @@ const MAX_SEGMENT_BUFFER_SIZE: u16 = 8192; // 8 KiB
 const WAL_EXTENSION: &str = "-bp.wal";
 pub(crate) const WAL_DEFAULT_ID: u64 = 0;
 
+#[derive(Debug)]
 pub struct MultiWal {
     partitions: Arc<Mutex<HashMap<String, Wal>>>,
     root_directory: PathBuf,
@@ -52,19 +53,44 @@ impl MultiWal {
             .unwrap();
     }
 
-    pub fn write(&self, key: &str, op: WalOperation) {
-        self.partitions
-            .lock()
-            .entry(key.to_string())
-            .and_modify(|wal| {
-                wal.write(op.clone()).unwrap();
-            })
-            .or_insert_with(|| {
-                let wal_dir = self.create_wal_directory(key);
-                let mut wal = Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap();
-                wal.write(op).unwrap(); // Ensure that the inbound op is not lost
-                wal
-            });
+    pub fn write(&self, op: WalOperation) {
+        match &op {
+            WalOperation::Message(msg) => {
+                self.partitions
+                    .lock()
+                    .entry(msg.key.clone())
+                    .and_modify(|wal| {
+                        wal.write(op.clone()).unwrap();
+                    })
+                    .or_insert_with(|| {
+                        let wal_dir = self.create_wal_directory(&msg.key);
+                        let mut wal = Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap();
+                        wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
+                        wal
+                    });
+            }
+            WalOperation::Namespace(_) => {
+                unreachable!("namespace creation not written yet for multi")
+            }
+        }
+    }
+
+    pub fn replay<P: AsRef<Path>>(directory: P) -> HashMap<String, BigPipeValue> {
+        let mut multi = HashMap::new();
+        for entry in WalkDir::new(directory)
+            .max_depth(1) // current directory only
+            .into_iter()
+        {
+            let entry = entry.unwrap();
+            // Hack to skip over the initially passed
+            // directory, as this counts as an entry.
+            // Find a better way to do this.
+            if entry.depth() == 1 {
+                let (_, inner) = Wal::replay(entry.path()).expect("should exist");
+                multi.extend(inner);
+            }
+        }
+        multi
     }
 }
 
@@ -526,7 +552,7 @@ mod test {
         let dir = TempDir::new().unwrap();
         let multi = MultiWal::new(dir.path().to_path_buf());
 
-        multi.write("hello", WalOperation::test_message(10));
+        multi.write(WalOperation::test_message(10));
         multi.flush("hello");
 
         drop(multi);
@@ -537,6 +563,31 @@ mod test {
         assert_eq!(
             inner.get("hello").unwrap().get_range(0),
             vec![ServerMessage::new("hello".to_string(), "world".into(), 10)]
+        );
+    }
+
+    #[test]
+    fn multi_replay() {
+        let dir = TempDir::new().unwrap();
+        let multi = MultiWal::new(dir.path().to_path_buf());
+
+        multi.write(WalOperation::test_message(10).with_key("foo"));
+        multi.write(WalOperation::test_message(20).with_key("bar"));
+
+        multi.flush("foo");
+        multi.flush("bar");
+
+        drop(multi);
+
+        let multi = MultiWal::replay(dir.path());
+        assert_eq!(multi.keys().len(), 2);
+        assert_eq!(
+            multi.get("foo").unwrap().get_range(0),
+            vec![ServerMessage::new("foo".to_string(), "world".into(), 10)]
+        );
+        assert_eq!(
+            multi.get("bar").unwrap().get_range(0),
+            vec![ServerMessage::new("bar".to_string(), "world".into(), 20)]
         );
     }
 }

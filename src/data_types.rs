@@ -123,6 +123,18 @@ impl WalOperation {
             timestamp,
         })
     }
+
+    #[cfg(test)]
+    pub fn with_key(self, key: &str) -> Self {
+        match self {
+            WalOperation::Message(msg) => WalOperation::Message(WalMessageEntry {
+                key: key.to_string(),
+                value: msg.value,
+                timestamp: msg.timestamp,
+            }),
+            WalOperation::Namespace(_) => todo!(),
+        }
+    }
 }
 
 impl TryFrom<SegmentEntryProto> for WalOperation {

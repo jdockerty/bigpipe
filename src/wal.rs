@@ -1,9 +1,11 @@
 use std::io::{self, BufReader, Read};
 use std::path::Path;
+use std::sync::Arc;
 use std::{fs::File, io::Write, path::PathBuf};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::HashMap;
+use parking_lot::Mutex;
 use prost::Message;
 use tracing::{debug, error, info};
 use walkdir::{DirEntry, WalkDir};
@@ -18,6 +20,67 @@ const MAX_SEGMENT_BUFFER_SIZE: u16 = 8192; // 8 KiB
 
 const WAL_EXTENSION: &str = "-bp.wal";
 pub(crate) const WAL_DEFAULT_ID: u64 = 0;
+
+#[derive(Debug)]
+pub struct MultiWal {
+    partitions: Arc<Mutex<HashMap<String, Wal>>>,
+    root_directory: PathBuf,
+}
+
+impl MultiWal {
+    pub fn new(root_directory: PathBuf) -> Self {
+        Self {
+            partitions: Arc::new(Mutex::new(HashMap::with_capacity(100))),
+            root_directory,
+        }
+    }
+
+    /// Create the WAL directory structure that will be used for the underlying
+    /// [`Wal`] for a particular key, returning the associated [`PathBuf`].
+    fn create_wal_directory(&self, key: &str) -> PathBuf {
+        let wal_dir = PathBuf::from(format!("{}/{key}", self.root_directory.display()));
+        std::fs::create_dir(&wal_dir).unwrap();
+        wal_dir
+    }
+
+    /// Flush the [`Wal`] of a particular `key`.
+    pub(crate) fn flush(&self, key: &str) {
+        self.partitions
+            .lock()
+            .get_mut(key)
+            .unwrap()
+            .flush()
+            .unwrap();
+    }
+
+    pub fn write(&self, key: &str, op: WalOperation) {
+        self.partitions
+            .lock()
+            .entry(key.to_string())
+            .and_modify(|wal| {
+                wal.write(op.clone()).unwrap();
+            })
+            .or_insert_with(|| {
+                let wal_dir = self.create_wal_directory(key);
+                let mut wal = Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap();
+                wal.write(op).unwrap(); // Ensure that the inbound op is not lost
+                wal
+            });
+    }
+
+    pub fn replay<P: AsRef<Path>>(directory: P) {
+        let mut highest_segment_id = 0;
+        for entry in WalkDir::new(directory)
+            .max_depth(1) // current directory only
+            .into_iter()
+            .filter_map(|e| e.ok())
+            // Directories are made per key
+            .filter(|e| e.path().is_dir())
+        {
+            todo!()
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Wal {
@@ -457,5 +520,54 @@ mod test {
 
         let wal = Wal::try_new(10, dir.path().to_path_buf(), None).unwrap();
         assert_eq!(wal.closed_segments().len(), 10); // 0-base index, 0..=9 is 10 closed segments
+    }
+
+    #[test]
+    fn multi_directory_structure() {
+        let dir = TempDir::new().unwrap();
+        let multi = MultiWal::new(dir.path().to_path_buf());
+
+        let wal_dir = multi.create_wal_directory("my_new_namespace");
+        assert_eq!(
+            wal_dir.to_string_lossy(),
+            format!("{}/my_new_namespace", dir.path().display())
+        );
+        assert!(std::fs::exists(&wal_dir).unwrap());
+    }
+
+    #[test]
+    fn multi_wal_ops() {
+        let dir = TempDir::new().unwrap();
+        let multi = MultiWal::new(dir.path().to_path_buf());
+
+        multi.write("hello", WalOperation::test_message(10));
+        multi.flush("hello");
+
+        drop(multi);
+
+        let previous_dir = format!("{}/hello", dir.path().display());
+        let (_, inner) = Wal::replay(&previous_dir).unwrap();
+        assert_eq!(inner.get("hello").unwrap().get_range(0).len(), 1);
+        assert_eq!(
+            inner.get("hello").unwrap().get_range(0),
+            vec![ServerMessage::new("hello".to_string(), "world".into(), 10)]
+        );
+    }
+
+    #[test]
+    fn multi_replay() {
+        let dir = TempDir::new().unwrap();
+        let multi = MultiWal::new(dir.path().to_path_buf());
+
+        multi.write("foo", WalOperation::test_message(10));
+        multi.write("bar", WalOperation::test_message(20));
+
+        multi.flush("foo");
+        multi.flush("bar");
+
+        drop(multi);
+
+        MultiWal::replay(dir.path());
+        todo!();
     }
 }

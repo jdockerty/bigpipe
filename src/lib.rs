@@ -129,7 +129,7 @@ mod tests {
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
 
         bigpipe.write(&ServerMessage::test_message(1)).unwrap();
-        bigpipe.wal.flush().unwrap();
+        bigpipe.wal.flush("hello").unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
         let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
@@ -152,7 +152,7 @@ mod tests {
         for i in 0..100 {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();
         }
-        bigpipe.wal.flush().unwrap();
+        bigpipe.wal.flush("hello").unwrap();
 
         assert_eq!(
             bigpipe.get_message_range("hello", 10).unwrap(),

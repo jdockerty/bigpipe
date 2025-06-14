@@ -46,13 +46,8 @@ impl MultiWal {
     }
 
     /// Flush the [`Wal`] of a particular `key`.
-    pub(crate) fn flush(&self, namespace: &str) {
-        self.namespaces
-            .lock()
-            .get_mut(namespace)
-            .unwrap()
-            .flush()
-            .unwrap();
+    pub(crate) fn flush(&self, namespace: &str) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(self.namespaces.lock().get_mut(namespace).unwrap().flush()?)
     }
 
     /// Flush all namespace [`Wal`]s.
@@ -79,10 +74,10 @@ impl MultiWal {
             });
     }
 
-    pub fn write(&self, op: WalOperation) {
+    pub fn write(&self, op: WalOperation) -> Result<(), Box<dyn std::error::Error>> {
         match &op {
-            WalOperation::Message(msg) => self.write_under_lock(&msg.key, &op),
-            WalOperation::Namespace(namespace) => self.write_under_lock(&namespace.key, &op),
+            WalOperation::Message(msg) => Ok(self.write_under_lock(&msg.key, &op)),
+            WalOperation::Namespace(namespace) => Ok(self.write_under_lock(&namespace.key, &op)),
         }
     }
 

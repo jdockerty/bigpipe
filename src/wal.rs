@@ -55,6 +55,14 @@ impl MultiWal {
             .unwrap();
     }
 
+    /// Flush all namespace [`Wal`]s.
+    pub(crate) fn flush_all(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.namespaces
+            .lock()
+            .iter_mut()
+            .try_for_each(|(_, wal)| wal.flush())
+    }
+
     fn write_under_lock(&self, namespace: &str, op: &WalOperation) {
         self.namespaces
             .lock()
@@ -572,13 +580,12 @@ mod test {
     #[test]
     fn multi_replay() {
         let dir = TempDir::new().unwrap();
-        let multi = MultiWal::new(dir.path().to_path_buf());
+        let multi = MultiWal::new(dir.path().to_path_buf(), None);
 
         multi.write(WalOperation::test_message(10).with_key("foo"));
         multi.write(WalOperation::test_message(20).with_key("bar"));
 
-        multi.flush("foo");
-        multi.flush("bar");
+        multi.flush_all().unwrap();
 
         drop(multi);
 

@@ -53,25 +53,25 @@ impl MultiWal {
             .unwrap();
     }
 
+    fn write_under_lock(&self, namespace: &str, op: &WalOperation) {
+        self.namespaces
+            .lock()
+            .entry(namespace.to_string())
+            .and_modify(|wal| {
+                wal.write(op.clone()).unwrap();
+            })
+            .or_insert_with(|| {
+                let wal_dir = self.create_wal_directory(namespace);
+                let mut wal = Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap();
+                wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
+                wal
+            });
+    }
+
     pub fn write(&self, op: WalOperation) {
         match &op {
-            WalOperation::Message(msg) => {
-                self.namespaces
-                    .lock()
-                    .entry(msg.key.clone())
-                    .and_modify(|wal| {
-                        wal.write(op.clone()).unwrap();
-                    })
-                    .or_insert_with(|| {
-                        let wal_dir = self.create_wal_directory(&msg.key);
-                        let mut wal = Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap();
-                        wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
-                        wal
-                    });
-            }
-            WalOperation::Namespace(_) => {
-                unreachable!("namespace creation not written yet for multi")
-            }
+            WalOperation::Message(msg) => self.write_under_lock(&msg.key, &op),
+            WalOperation::Namespace(namespace) => self.write_under_lock(&namespace.key, &op),
         }
     }
 

@@ -45,11 +45,13 @@ impl MultiWal {
         wal_dir
     }
 
+    #[allow(dead_code)]
     /// Flush the [`Wal`] of a particular `key`.
     pub(crate) fn flush(&self, namespace: &str) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(self.namespaces.lock().get_mut(namespace).unwrap().flush()?)
+        self.namespaces.lock().get_mut(namespace).unwrap().flush()
     }
 
+    #[allow(dead_code)]
     /// Flush all namespace [`Wal`]s.
     pub(crate) fn flush_all(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.namespaces
@@ -76,8 +78,14 @@ impl MultiWal {
 
     pub fn write(&self, op: WalOperation) -> Result<(), Box<dyn std::error::Error>> {
         match &op {
-            WalOperation::Message(msg) => Ok(self.write_under_lock(&msg.key, &op)),
-            WalOperation::Namespace(namespace) => Ok(self.write_under_lock(&namespace.key, &op)),
+            WalOperation::Message(msg) => {
+                self.write_under_lock(&msg.key, &op);
+                Ok(())
+            }
+            WalOperation::Namespace(namespace) => {
+                self.write_under_lock(&namespace.key, &op);
+                Ok(())
+            }
         }
     }
 
@@ -558,8 +566,8 @@ mod test {
         let dir = TempDir::new().unwrap();
         let multi = MultiWal::new(dir.path().to_path_buf(), None);
 
-        multi.write(WalOperation::test_message(10));
-        multi.flush("hello");
+        multi.write(WalOperation::test_message(10)).unwrap();
+        multi.flush("hello").unwrap();
 
         drop(multi);
 
@@ -577,8 +585,12 @@ mod test {
         let dir = TempDir::new().unwrap();
         let multi = MultiWal::new(dir.path().to_path_buf(), None);
 
-        multi.write(WalOperation::test_message(10).with_key("foo"));
-        multi.write(WalOperation::test_message(20).with_key("bar"));
+        multi
+            .write(WalOperation::test_message(10).with_key("foo"))
+            .unwrap();
+        multi
+            .write(WalOperation::test_message(20).with_key("bar"))
+            .unwrap();
 
         multi.flush_all().unwrap();
 

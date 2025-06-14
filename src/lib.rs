@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
-use wal::{MultiWal, Wal, DEFAULT_MAX_SEGMENT_SIZE, WAL_DEFAULT_ID};
+use wal::MultiWal;
 
 #[derive(Debug)]
 pub struct BigPipe {

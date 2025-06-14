@@ -25,13 +25,15 @@ pub(crate) const WAL_DEFAULT_ID: u64 = 0;
 pub struct MultiWal {
     namespaces: Arc<Mutex<HashMap<String, Wal>>>,
     root_directory: PathBuf,
+    max_segment_size: usize,
 }
 
 impl MultiWal {
-    pub fn new(root_directory: PathBuf) -> Self {
+    pub fn new(root_directory: PathBuf, max_segment_size: Option<usize>) -> Self {
         Self {
             namespaces: Arc::new(Mutex::new(HashMap::with_capacity(100))),
             root_directory,
+            max_segment_size: max_segment_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
         }
     }
 
@@ -62,7 +64,8 @@ impl MultiWal {
             })
             .or_insert_with(|| {
                 let wal_dir = self.create_wal_directory(namespace);
-                let mut wal = Wal::try_new(WAL_DEFAULT_ID, wal_dir, None).unwrap();
+                let mut wal =
+                    Wal::try_new(WAL_DEFAULT_ID, wal_dir, Some(self.max_segment_size)).unwrap();
                 wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
                 wal
             });
@@ -537,7 +540,7 @@ mod test {
     #[test]
     fn multi_directory_structure() {
         let dir = TempDir::new().unwrap();
-        let multi = MultiWal::new(dir.path().to_path_buf());
+        let multi = MultiWal::new(dir.path().to_path_buf(), None);
 
         let wal_dir = multi.create_wal_directory("my_new_namespace");
         assert_eq!(
@@ -550,7 +553,7 @@ mod test {
     #[test]
     fn multi_wal_ops() {
         let dir = TempDir::new().unwrap();
-        let multi = MultiWal::new(dir.path().to_path_buf());
+        let multi = MultiWal::new(dir.path().to_path_buf(), None);
 
         multi.write(WalOperation::test_message(10));
         multi.flush("hello");

@@ -23,14 +23,14 @@ pub(crate) const WAL_DEFAULT_ID: u64 = 0;
 
 #[derive(Debug)]
 pub struct MultiWal {
-    partitions: Arc<Mutex<HashMap<String, Wal>>>,
+    namespaces: Arc<Mutex<HashMap<String, Wal>>>,
     root_directory: PathBuf,
 }
 
 impl MultiWal {
     pub fn new(root_directory: PathBuf) -> Self {
         Self {
-            partitions: Arc::new(Mutex::new(HashMap::with_capacity(100))),
+            namespaces: Arc::new(Mutex::new(HashMap::with_capacity(100))),
             root_directory,
         }
     }
@@ -45,7 +45,7 @@ impl MultiWal {
 
     /// Flush the [`Wal`] of a particular `key`.
     pub(crate) fn flush(&self, key: &str) {
-        self.partitions
+        self.namespaces
             .lock()
             .get_mut(key)
             .unwrap()
@@ -56,7 +56,7 @@ impl MultiWal {
     pub fn write(&self, op: WalOperation) {
         match &op {
             WalOperation::Message(msg) => {
-                self.partitions
+                self.namespaces
                     .lock()
                     .entry(msg.key.clone())
                     .and_modify(|wal| {

@@ -37,17 +37,17 @@ impl MultiWal {
 
     /// Create the WAL directory structure that will be used for the underlying
     /// [`Wal`] for a particular key, returning the associated [`PathBuf`].
-    fn create_wal_directory(&self, key: &str) -> PathBuf {
-        let wal_dir = PathBuf::from(format!("{}/{key}", self.root_directory.display()));
+    fn create_wal_directory(&self, namespace: &str) -> PathBuf {
+        let wal_dir = PathBuf::from(format!("{}/{namespace}", self.root_directory.display()));
         std::fs::create_dir(&wal_dir).unwrap();
         wal_dir
     }
 
     /// Flush the [`Wal`] of a particular `key`.
-    pub(crate) fn flush(&self, key: &str) {
+    pub(crate) fn flush(&self, namespace: &str) {
         self.namespaces
             .lock()
-            .get_mut(key)
+            .get_mut(namespace)
             .unwrap()
             .flush()
             .unwrap();

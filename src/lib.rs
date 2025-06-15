@@ -25,6 +25,9 @@ impl BigPipe {
         wal_directory: PathBuf,
         wal_max_segment_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        if !wal_directory.exists() {
+            std::fs::create_dir_all(&wal_directory)?;
+        }
         let inner = Mutex::new(MultiWal::replay(&wal_directory));
         let wal = MultiWal::new(wal_directory, wal_max_segment_size);
         Ok(Self { wal, inner })

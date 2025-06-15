@@ -21,6 +21,9 @@ const MAX_SEGMENT_BUFFER_SIZE: u16 = 8192; // 8 KiB
 const WAL_EXTENSION: &str = "-bp.wal";
 pub(crate) const WAL_DEFAULT_ID: u64 = 0;
 
+/// A write-ahead log implementation which will handle
+/// multiple underlying [`Wal`]s at once, keyed by
+/// namespace.
 #[derive(Debug)]
 pub struct MultiWal {
     namespaces: Arc<Mutex<HashMap<String, Wal>>>,
@@ -29,6 +32,7 @@ pub struct MultiWal {
 }
 
 impl MultiWal {
+    /// Create a new instance of [`MultiWal`].
     pub fn new(root_directory: PathBuf, max_segment_size: Option<usize>) -> Self {
         Self {
             namespaces: Arc::new(Mutex::new(HashMap::with_capacity(100))),
@@ -76,6 +80,8 @@ impl MultiWal {
             });
     }
 
+    /// Write a [`WalOperation`] to the respective [`Wal`]. The key within
+    /// the operation is used as the namespace.
     pub fn write(&self, op: WalOperation) -> Result<(), Box<dyn std::error::Error>> {
         match &op {
             WalOperation::Message(msg) => {
@@ -89,6 +95,20 @@ impl MultiWal {
         }
     }
 
+    /// Replay all [`Wal`] files that are found from the given directory.
+    ///
+    /// This will walk the given directory, it is a expectation that
+    /// sub-directories are keys for a namespace and will contain
+    /// individual segment files.
+    ///
+    /// For example:
+    ///
+    /// /tmp/example-multi-wal
+    /// ├── bar <-- namespace 'bar'
+    /// │   └── 0-bp.wal
+    /// └── foo <-- namespace 'foo'
+    ///     ├── 0-bp.wal
+    ///     └── 1-bp.wal
     pub fn replay<P: AsRef<Path>>(directory: P) -> HashMap<String, BigPipeValue> {
         let mut multi = HashMap::new();
         for entry in WalkDir::new(directory)
@@ -108,6 +128,11 @@ impl MultiWal {
     }
 }
 
+/// A write-ahead log (WAL) implementation.
+///
+/// The WAL is used to write bigpipe operations
+/// into an append-only file for durability, before
+/// becoming available to consumers.
 #[derive(Debug)]
 pub struct Wal {
     id: u64,
@@ -140,6 +165,8 @@ impl Wal {
         })
     }
 
+    /// Replay an individual [`Wal`], returning the inner data representation.
+    /// This requires reading ALL segments that are available.
     pub fn replay<P: AsRef<Path>>(directory: P) -> Option<(u64, HashMap<String, BigPipeValue>)> {
         let mut highest_segment_id: u64 = WAL_DEFAULT_ID;
         let mut segment_paths = Vec::new();

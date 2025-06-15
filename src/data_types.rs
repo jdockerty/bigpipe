@@ -93,17 +93,20 @@ impl ServerMessage {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct WalMessageEntry {
     pub key: String,
     pub value: Bytes,
     pub timestamp: i64,
 }
 
+#[derive(Debug, Clone)]
 pub struct WalNamespaceEntry {
     pub key: String,
     pub retention_policy: RetentionPolicy,
 }
 
+#[derive(Debug, Clone)]
 pub enum WalOperation {
     /// Message ingest
     Message(WalMessageEntry),
@@ -119,6 +122,21 @@ impl WalOperation {
             value: "world".into(),
             timestamp,
         })
+    }
+
+    #[cfg(test)]
+    pub fn with_key(self, key: &str) -> Self {
+        match self {
+            WalOperation::Message(msg) => WalOperation::Message(WalMessageEntry {
+                key: key.to_string(),
+                value: msg.value,
+                timestamp: msg.timestamp,
+            }),
+            WalOperation::Namespace(namespace) => WalOperation::Namespace(WalNamespaceEntry {
+                key: namespace.key,
+                retention_policy: namespace.retention_policy,
+            }),
+        }
     }
 }
 

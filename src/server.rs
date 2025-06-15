@@ -208,7 +208,7 @@ mod test {
                 .write(&ServerMessage::test_message(i))
                 .unwrap();
         }
-        server.inner.lock().wal.flush().unwrap();
+        server.inner.lock().wal.flush("hello").unwrap();
 
         let messages = server
             .read(Request::new(ReadMessageRequest {

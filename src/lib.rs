@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
-use wal::{Wal, WAL_DEFAULT_ID};
+use wal::MultiWal;
 
 #[derive(Debug)]
 pub struct BigPipe {
@@ -17,7 +17,7 @@ pub struct BigPipe {
     /// partitioned by their key.
     inner: Mutex<HashMap<String, BigPipeValue>>,
     /// Write ahead log to ensure durability of writes.
-    wal: Wal,
+    wal: MultiWal,
 }
 
 impl BigPipe {
@@ -25,16 +25,9 @@ impl BigPipe {
         wal_directory: PathBuf,
         wal_max_segment_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        if let Some((last_segment_id, inner)) = Wal::replay(&wal_directory) {
-            let wal = Wal::try_new(last_segment_id + 1, wal_directory, wal_max_segment_size)?;
-            let inner = Mutex::new(inner);
-            Ok(Self { inner, wal })
-        } else {
-            Ok(Self {
-                inner: Mutex::new(HashMap::with_capacity(100)),
-                wal: Wal::try_new(WAL_DEFAULT_ID, wal_directory, wal_max_segment_size)?,
-            })
-        }
+        let inner = Mutex::new(MultiWal::replay(&wal_directory));
+        let wal = MultiWal::new(wal_directory, wal_max_segment_size);
+        Ok(Self { wal, inner })
     }
 
     /// Write a message.
@@ -136,7 +129,7 @@ mod tests {
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
 
         bigpipe.write(&ServerMessage::test_message(1)).unwrap();
-        bigpipe.wal.flush().unwrap();
+        bigpipe.wal.flush("hello").unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
         let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
@@ -159,7 +152,7 @@ mod tests {
         for i in 0..100 {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();
         }
-        bigpipe.wal.flush().unwrap();
+        bigpipe.wal.flush("hello").unwrap();
 
         assert_eq!(
             bigpipe.get_message_range("hello", 10).unwrap(),

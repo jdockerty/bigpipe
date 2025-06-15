@@ -46,13 +46,13 @@ impl MultiWal {
     }
 
     #[allow(dead_code)]
-    /// Flush the [`Wal`] of a particular `key`.
+    /// Flush the [`Wal`] of a particular namespace.
     pub(crate) fn flush(&self, namespace: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.namespaces.lock().get_mut(namespace).unwrap().flush()
     }
 
     #[allow(dead_code)]
-    /// Flush all namespace [`Wal`]s.
+    /// Flush the [`Wal`] of all namespaces.
     pub(crate) fn flush_all(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.namespaces
             .lock()

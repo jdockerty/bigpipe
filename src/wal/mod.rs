@@ -1,8 +1,10 @@
+/// Implementation to hold multiple WAL handles across directories.
 mod multi;
-mod wal;
+/// Write-ahead log implementation.
+mod single;
 
 pub use multi::MultiWal;
-use wal::Wal;
+use single::Wal;
 
 pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB
 const MAX_SEGMENT_BUFFER_SIZE: u16 = 8192; // 8 KiB

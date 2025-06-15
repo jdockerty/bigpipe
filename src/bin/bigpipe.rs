@@ -63,7 +63,7 @@ enum Commands {
         addr: String,
 
         /// Directory where the write-ahead log (WAL) files will be written to.
-        #[arg(long, env = "BIGPIPE_WAL_DIRECTORY", default_value = "./")]
+        #[arg(long, env = "BIGPIPE_WAL_DIRECTORY", default_value = default_wal_directory().into_os_string() )]
         wal_directory: PathBuf,
 
         /// Max size of a segment for the WAL.
@@ -73,6 +73,10 @@ enum Commands {
         #[command(flatten)]
         verbosity: Verbosity<InfoLevel>,
     },
+}
+
+fn default_wal_directory() -> PathBuf {
+    std::env::temp_dir().join("bigpipe")
 }
 
 #[tokio::main]

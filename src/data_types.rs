@@ -132,7 +132,10 @@ impl WalOperation {
                 value: msg.value,
                 timestamp: msg.timestamp,
             }),
-            WalOperation::Namespace(_) => todo!(),
+            WalOperation::Namespace(namespace) => WalOperation::Namespace(WalNamespaceEntry {
+                key: namespace.key,
+                retention_policy: namespace.retention_policy,
+            }),
         }
     }
 }

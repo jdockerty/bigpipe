@@ -127,7 +127,7 @@ mod test {
     use tempfile::TempDir;
 
     #[test]
-    fn multi_directory_structure() {
+    fn directory_structure() {
         let dir = TempDir::new().unwrap();
         let multi = MultiWal::new(dir.path().to_path_buf(), None);
 
@@ -140,7 +140,7 @@ mod test {
     }
 
     #[test]
-    fn multi_wal_ops() {
+    fn ops() {
         let dir = TempDir::new().unwrap();
         let multi = MultiWal::new(dir.path().to_path_buf(), None);
 
@@ -159,7 +159,7 @@ mod test {
     }
 
     #[test]
-    fn multi_replay() {
+    fn replay() {
         let dir = TempDir::new().unwrap();
         let multi = MultiWal::new(dir.path().to_path_buf(), None);
 

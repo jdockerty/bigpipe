@@ -93,6 +93,9 @@ impl ServerMessage {
     }
 }
 
+/// Definition of a message entry that resides in the WAL.
+///
+/// This is this crate's version of the protobuf equivalent.
 #[derive(Debug, Clone)]
 pub struct WalMessageEntry {
     pub key: String,
@@ -100,12 +103,16 @@ pub struct WalMessageEntry {
     pub timestamp: i64,
 }
 
+/// Definition of a namespace entry that resides in the WAL.
+///
+/// This is this crate's version of the protobuf equivalent.
 #[derive(Debug, Clone)]
 pub struct WalNamespaceEntry {
     pub key: String,
     pub retention_policy: RetentionPolicy,
 }
 
+/// An operation that can be enacted onto the WAL.
 #[derive(Debug, Clone)]
 pub enum WalOperation {
     /// Message ingest

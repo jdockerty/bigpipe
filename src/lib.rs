@@ -5,7 +5,6 @@ mod wal;
 use std::path::PathBuf;
 
 use hashbrown::HashMap;
-use parking_lot::Mutex;
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
@@ -15,7 +14,7 @@ use wal::MultiWal;
 pub struct BigPipe {
     /// Internal queue to hold ordered messages as they are received,
     /// partitioned by their key.
-    inner: Mutex<HashMap<String, BigPipeValue>>,
+    inner: HashMap<String, BigPipeValue>,
     /// Write ahead log to ensure durability of writes.
     wal: MultiWal,
 }
@@ -28,7 +27,7 @@ impl BigPipe {
         if !wal_directory.exists() {
             std::fs::create_dir_all(&wal_directory)?;
         }
-        let inner = Mutex::new(MultiWal::replay(&wal_directory));
+        let inner = MultiWal::replay(&wal_directory);
         let wal = MultiWal::new(wal_directory, wal_max_segment_size);
         Ok(Self { wal, inner })
     }
@@ -43,7 +42,6 @@ impl BigPipe {
     /// Add a message to the internal structure.
     fn add_message(&mut self, message: &ServerMessage) {
         self.inner
-            .lock()
             .entry(message.key().to_string())
             .and_modify(|messages| {
                 debug!(key = message.key(), "updating");
@@ -60,7 +58,7 @@ impl BigPipe {
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
     pub fn get_messages(&self, partition_key: &str) -> Option<BigPipeValue> {
-        self.inner.lock().get(partition_key).cloned()
+        self.inner.get(partition_key).cloned()
     }
 
     /// Get a range of messages starting from the `offset`.
@@ -75,8 +73,7 @@ impl BigPipe {
 
     /// Get all messages.
     pub fn messages(&self) -> HashMap<String, BigPipeValue> {
-        let guard = self.inner.lock();
-        guard.clone()
+        self.inner.clone()
     }
 
     /// Write to the underlying WAL.

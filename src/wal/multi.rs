@@ -15,14 +15,14 @@ use crate::BigPipeValue;
 /// multiple underlying [`Wal`]s at once, keyed by
 /// namespace.
 #[derive(Debug)]
-pub struct MultiWal {
+pub struct NamespaceWal {
     namespaces: Arc<Mutex<HashMap<String, Wal>>>,
     root_directory: PathBuf,
     max_segment_size: usize,
 }
 
-impl MultiWal {
-    /// Create a new instance of [`MultiWal`].
+impl NamespaceWal {
+    /// Create a new instance of [`NamespaceWal`].
     pub fn new(root_directory: PathBuf, max_segment_size: Option<usize>) -> Self {
         Self {
             namespaces: Arc::new(Mutex::new(HashMap::with_capacity(100))),
@@ -129,7 +129,7 @@ mod test {
     #[test]
     fn directory_structure() {
         let dir = TempDir::new().unwrap();
-        let multi = MultiWal::new(dir.path().to_path_buf(), None);
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
 
         let wal_dir = multi.create_wal_directory("my_new_namespace");
         assert_eq!(
@@ -142,7 +142,7 @@ mod test {
     #[test]
     fn ops() {
         let dir = TempDir::new().unwrap();
-        let multi = MultiWal::new(dir.path().to_path_buf(), None);
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
 
         multi.write(WalOperation::test_message(10)).unwrap();
         multi.flush("hello").unwrap();
@@ -161,7 +161,7 @@ mod test {
     #[test]
     fn replay() {
         let dir = TempDir::new().unwrap();
-        let multi = MultiWal::new(dir.path().to_path_buf(), None);
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
 
         multi
             .write(WalOperation::test_message(10).with_key("foo"))
@@ -174,7 +174,7 @@ mod test {
 
         drop(multi);
 
-        let multi = MultiWal::replay(dir.path());
+        let multi = NamespaceWal::replay(dir.path());
         assert_eq!(multi.keys().len(), 2);
         assert_eq!(
             multi.get("foo").unwrap().get_range(0),

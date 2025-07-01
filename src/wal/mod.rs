@@ -3,7 +3,7 @@ mod multi;
 /// Write-ahead log implementation.
 mod single;
 
-pub use multi::MultiWal;
+pub use multi::NamespaceWal;
 use single::Wal;
 
 pub(crate) const DEFAULT_MAX_SEGMENT_SIZE: usize = 16777216; // 16 MiB

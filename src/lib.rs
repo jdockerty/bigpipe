@@ -8,7 +8,7 @@ use hashbrown::HashMap;
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
-use wal::MultiWal;
+use wal::NamespaceWal;
 
 #[derive(Debug)]
 pub struct BigPipe {
@@ -16,7 +16,7 @@ pub struct BigPipe {
     /// partitioned by their key.
     inner: HashMap<String, BigPipeValue>,
     /// Write ahead log to ensure durability of writes.
-    wal: MultiWal,
+    wal: NamespaceWal,
 }
 
 impl BigPipe {
@@ -27,8 +27,8 @@ impl BigPipe {
         if !wal_directory.exists() {
             std::fs::create_dir_all(&wal_directory)?;
         }
-        let inner = MultiWal::replay(&wal_directory);
-        let wal = MultiWal::new(wal_directory, wal_max_segment_size);
+        let inner = NamespaceWal::replay(&wal_directory);
+        let wal = NamespaceWal::new(wal_directory, wal_max_segment_size);
         Ok(Self { wal, inner })
     }
 

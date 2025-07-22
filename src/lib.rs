@@ -1,3 +1,4 @@
+pub mod client;
 pub mod data_types;
 pub mod server;
 mod wal;

@@ -3,19 +3,17 @@ use std::{net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use tokio_stream::StreamExt;
-use tonic::{transport::Server, Request};
+use tonic::transport::Server;
 
 use bigpipe::{
+    client::BigPipeClient,
     data_types::{
-        message::{
-            message_client::MessageClient, message_server::MessageServer, ReadMessageRequest,
-            SendMessageRequest,
-        },
+        message::message_server::MessageServer,
         namespace::{
             namespace_client::NamespaceClient, namespace_server::NamespaceServer,
             CreateNamespaceRequest,
         },
-        RetentionPolicy,
+        ClientMessage, RetentionPolicy,
     },
     server::BigPipeServer,
     BigPipe,
@@ -106,12 +104,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Read { key, offset, addr } => {
-            let mut client = MessageClient::connect(addr).await?;
+            let mut client = BigPipeClient::new(&addr).await;
 
-            let mut response_stream = client
-                .read(Request::new(ReadMessageRequest { key, offset }))
-                .await?
-                .into_inner();
+            let mut response_stream = client.read(&key, offset).await;
 
             while let Some(message) = response_stream.next().await {
                 let message = message?;
@@ -120,12 +115,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Write { key, value, addr } => {
-            let mut client = MessageClient::connect(addr).await?;
-            let req = Request::new(SendMessageRequest {
-                key,
-                value: value.into_bytes(),
-            });
-            client.send(req).await?;
+            let mut client = BigPipeClient::new(&addr).await;
+            client.send(ClientMessage::new(key, value.into())).await;
         }
         Commands::Server {
             addr,

@@ -116,7 +116,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Write { key, value, addr } => {
             let mut client = BigPipeClient::new(&addr).await;
-            client.send(ClientMessage::new(key, value.into())).await;
+            client
+                .send(ClientMessage::new(key, value.into()))
+                .await
+                .unwrap();
         }
         Commands::Server {
             addr,

@@ -104,9 +104,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Read { key, offset, addr } => {
-            let mut client = BigPipeClient::new(&addr).await;
+            let mut client = BigPipeClient::new(&addr).await?;
 
-            let mut response_stream = client.read(&key, offset).await;
+            let mut response_stream = client.read(&key, offset).await?;
 
             while let Some(message) = response_stream.next().await {
                 let message = message?;
@@ -115,11 +115,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Write { key, value, addr } => {
-            let mut client = BigPipeClient::new(&addr).await;
-            client
-                .send(ClientMessage::new(key, value.into()))
-                .await
-                .unwrap();
+            let mut client = BigPipeClient::new(&addr).await?;
+            client.send(ClientMessage::new(key, value.into())).await?;
         }
         Commands::Server {
             addr,

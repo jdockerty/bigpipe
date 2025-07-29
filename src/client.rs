@@ -14,9 +14,9 @@ pub struct BigPipeClient {
 
 impl BigPipeClient {
     /// Construct a new [`BigPipeClient`].
-    pub async fn new(address: &str) -> Self {
-        let client = MessageClient::connect(address.to_string()).await.unwrap();
-        Self { client }
+    pub async fn new(address: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let client = MessageClient::connect(address.to_string()).await?;
+        Ok(Self { client })
     }
 
     /// Send a message to the configured server.
@@ -26,8 +26,7 @@ impl BigPipeClient {
                 key: message.key().to_string(),
                 value: message.value().to_vec(),
             })
-            .await
-            .unwrap();
+            .await?;
         Ok(())
     }
 
@@ -112,7 +111,9 @@ mod test {
     #[tokio::test]
     async fn send() {
         let (_wal_dir, addr) = run_server();
-        let mut client = BigPipeClient::new(&format!("http://{}", addr)).await;
+        let mut client = BigPipeClient::new(&format!("http://{}", addr))
+            .await
+            .unwrap();
 
         assert!(client
             .send(ClientMessage::new(
@@ -126,7 +127,9 @@ mod test {
     #[tokio::test]
     async fn read() {
         let (_wal_dir, addr) = run_server();
-        let mut client = BigPipeClient::new(&format!("http://{}", addr)).await;
+        let mut client = BigPipeClient::new(&format!("http://{}", addr))
+            .await
+            .unwrap();
 
         let message_count = 10;
 

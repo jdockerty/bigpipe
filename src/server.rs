@@ -1,6 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
+use prometheus::Registry;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Code, Request, Response, Status};
 use tracing::{debug, error, info};
@@ -27,7 +28,7 @@ pub struct BigPipeServer {
 }
 
 impl BigPipeServer {
-    pub fn new(inner: BigPipe) -> Self {
+    pub fn new(inner: BigPipe, metrics: &Registry) -> Self {
         Self {
             inner: Mutex::new(inner),
         }

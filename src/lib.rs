@@ -6,6 +6,7 @@ mod wal;
 use std::path::PathBuf;
 
 use hashbrown::HashMap;
+use prometheus::{HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry};
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
@@ -24,12 +25,27 @@ impl BigPipe {
     pub fn try_new(
         wal_directory: PathBuf,
         wal_max_segment_size: Option<usize>,
+        metrics: &Registry,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         if !wal_directory.exists() {
             std::fs::create_dir_all(&wal_directory)?;
         }
-        let inner = NamespaceWal::replay(&wal_directory);
-        let wal = NamespaceWal::new(wal_directory, wal_max_segment_size);
+
+        let wal_replay_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_wal_replay_duration_seconds",
+                "Total time taken for a WAL replay to complete",
+            ),
+            &["namespace"],
+        )
+        .unwrap();
+
+        metrics
+            .register(Box::new(wal_replay_duration.clone()))
+            .unwrap();
+
+        let inner = NamespaceWal::replay(&wal_directory, &wal_replay_duration);
+        let wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
         Ok(Self { wal, inner })
     }
 

@@ -3,6 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use hashbrown::HashMap;
 use parking_lot::Mutex;
+use prometheus::{Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Registry};
+use tokio::time::Instant;
 use walkdir::WalkDir;
 
 use super::Wal;
@@ -19,15 +21,43 @@ pub struct NamespaceWal {
     namespaces: Arc<Mutex<HashMap<String, Wal>>>,
     root_directory: PathBuf,
     max_segment_size: usize,
+
+    total_namespaces: IntCounter,
+    wal_write_duration: HistogramVec,
 }
 
 impl NamespaceWal {
     /// Create a new instance of [`NamespaceWal`].
-    pub fn new(root_directory: PathBuf, max_segment_size: Option<usize>) -> Self {
+    pub fn new(
+        root_directory: PathBuf,
+        max_segment_size: Option<usize>,
+        metrics: &Registry,
+    ) -> Self {
+        let total_namespaces = IntCounter::new(
+            "bigpipe_wal_tracked_namespaces",
+            "Total namespaces being tracked over this processes lifetime",
+        )
+        .unwrap();
+
+        let wal_write_duration = HistogramVec::new(
+            HistogramOpts::new("bigpipe_wal_write_duraiton_ms", "Duration, in milliseconds, that it takes for a write to be made durable in the WAL"),
+            &["namespace"],
+        )
+        .unwrap();
+
+        metrics
+            .register(Box::new(total_namespaces.clone()))
+            .unwrap();
+        metrics
+            .register(Box::new(wal_write_duration.clone()))
+            .unwrap();
+
         Self {
             namespaces: Arc::new(Mutex::new(HashMap::with_capacity(100))),
             root_directory,
             max_segment_size: max_segment_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
+            total_namespaces,
+            wal_write_duration,
         }
     }
 
@@ -99,7 +129,10 @@ impl NamespaceWal {
     /// └── foo <-- namespace 'foo'
     ///     ├── 0-bp.wal
     ///     └── 1-bp.wal
-    pub fn replay<P: AsRef<Path>>(directory: P) -> HashMap<String, BigPipeValue> {
+    pub fn replay<P: AsRef<Path>>(
+        directory: P,
+        wal_replay_duration: &HistogramVec,
+    ) -> HashMap<String, BigPipeValue> {
         let mut multi = HashMap::new();
         for entry in WalkDir::new(directory)
             .max_depth(1) // current directory only
@@ -110,7 +143,11 @@ impl NamespaceWal {
             // directory, as this counts as an entry.
             // Find a better way to do this.
             if entry.depth() == 1 {
+                let start = Instant::now();
                 let (_, inner) = Wal::replay(entry.path()).expect("should exist");
+                wal_replay_duration
+                    .with_label_values(&["namespace"])
+                    .observe(start.elapsed().as_secs_f64());
                 multi.extend(inner);
             }
         }

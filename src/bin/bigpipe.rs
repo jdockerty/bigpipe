@@ -2,6 +2,7 @@ use std::{net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
+use prometheus::Registry;
 use tokio_stream::StreamExt;
 use tonic::transport::Server;
 
@@ -125,8 +126,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             verbosity,
         } => {
             tracing_subscriber::fmt().with_max_level(verbosity).init();
-            let bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size)?;
-            let bigpipe_server = Arc::new(BigPipeServer::new(bigpipe));
+            let metrics = Registry::new();
+            let bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size, &metrics)?;
+            let bigpipe_server = Arc::new(BigPipeServer::new(bigpipe, &metrics));
 
             Server::builder()
                 .add_service(MessageServer::new(Arc::clone(&bigpipe_server)))

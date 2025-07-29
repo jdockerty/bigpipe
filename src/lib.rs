@@ -6,7 +6,7 @@ mod wal;
 use std::path::PathBuf;
 
 use hashbrown::HashMap;
-use prometheus::{HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry};
+use prometheus::{HistogramOpts, HistogramVec, Registry};
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
@@ -108,6 +108,7 @@ impl BigPipe {
 
 #[cfg(test)]
 mod tests {
+    use prometheus::Registry;
     use tempfile::TempDir;
 
     use crate::{BigPipe, ServerMessage};
@@ -115,7 +116,8 @@ mod tests {
     #[test]
     fn add_messages() {
         let wal_dir = TempDir::new().unwrap();
-        let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new();
+        let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap();
 
         let msg_1 = ServerMessage::new(
             "hello".to_string(),
@@ -143,13 +145,15 @@ mod tests {
     #[test]
     fn wal_replay() {
         let dir = TempDir::new().unwrap();
-        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new();
+        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         bigpipe.write(&ServerMessage::test_message(1)).unwrap();
         bigpipe.wal.flush("hello").unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
-        let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new(); // use new registry, we cannot re-register metrics.
+        let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         let messages = bigpipe.get_messages("hello").unwrap();
         assert_eq!(messages.len(), 1);
@@ -164,7 +168,8 @@ mod tests {
     #[test]
     fn message_range() {
         let dir = TempDir::new().unwrap();
-        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new();
+        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         for i in 0..100 {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();

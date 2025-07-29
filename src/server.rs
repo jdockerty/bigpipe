@@ -149,6 +149,7 @@ mod test {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
+    use prometheus::Registry;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
     use tonic::{Code, Request};
@@ -172,8 +173,10 @@ mod test {
     #[tokio::test]
     async fn send_message() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         let resp = server
@@ -198,8 +201,10 @@ mod test {
     #[tokio::test]
     async fn read_messages() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         for i in 0..10 {
@@ -269,8 +274,10 @@ mod test {
     #[tokio::test]
     async fn create_namespace() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         let namespace = CreateNamespaceRequest {
@@ -301,8 +308,10 @@ mod test {
     #[tokio::test]
     async fn update_namespace() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         let update = UpdateNamespaceRequest {

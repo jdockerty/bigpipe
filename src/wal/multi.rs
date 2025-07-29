@@ -166,7 +166,8 @@ mod test {
     #[test]
     fn directory_structure() {
         let dir = TempDir::new().unwrap();
-        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
+        let metrics = Registry::new();
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
 
         let wal_dir = multi.create_wal_directory("my_new_namespace");
         assert_eq!(
@@ -179,7 +180,8 @@ mod test {
     #[test]
     fn ops() {
         let dir = TempDir::new().unwrap();
-        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
+        let metrics = Registry::new();
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
 
         multi.write(WalOperation::test_message(10)).unwrap();
         multi.flush("hello").unwrap();
@@ -198,7 +200,9 @@ mod test {
     #[test]
     fn replay() {
         let dir = TempDir::new().unwrap();
-        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
+        let metrics = Registry::new();
+
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
 
         multi
             .write(WalOperation::test_message(10).with_key("foo"))
@@ -211,7 +215,15 @@ mod test {
 
         drop(multi);
 
-        let multi = NamespaceWal::replay(dir.path());
+        let wal_replay_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_wal_replay_duration_seconds",
+                "Total time taken for a WAL replay to complete",
+            ),
+            &["namespace"],
+        )
+        .unwrap();
+        let multi = NamespaceWal::replay(dir.path(), &wal_replay_duration);
         assert_eq!(multi.keys().len(), 2);
         assert_eq!(
             multi.get("foo").unwrap().get_range(0),

@@ -35,10 +35,9 @@ impl BigPipeServer {
     pub fn new(inner: BigPipe, metrics: &Registry) -> Self {
         let ingest_path_duration = HistogramVec::new(
             HistogramOpts::new(
-                "bigpipe_ingest_path_duration_ms",
+                "bigpipe_ingest_path_duration_seconds",
                 "Time taken for a write to traverse the full ingest path and a response is returned to the caller",
-            )
-            .buckets(vec![1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0, 1000.0]),
+            ),
             &["outcome"],
         )
         .unwrap();

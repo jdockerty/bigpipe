@@ -28,6 +28,7 @@ pub struct BigPipeServer {
     inner: Mutex<BigPipe>,
 
     ingest_path_duration: HistogramVec,
+    read_path_duration: HistogramVec,
 }
 
 impl BigPipeServer {
@@ -42,12 +43,25 @@ impl BigPipeServer {
         )
         .unwrap();
 
+        let read_path_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_read_path_duration_seconds",
+                "Time taken for a read to be surfaced",
+            ),
+            &["outcome"],
+        )
+        .unwrap();
+
         metrics
             .register(Box::new(ingest_path_duration.clone()))
+            .unwrap();
+        metrics
+            .register(Box::new(read_path_duration.clone()))
             .unwrap();
         Self {
             inner: Mutex::new(inner),
             ingest_path_duration,
+            read_path_duration,
         }
     }
 }
@@ -73,12 +87,12 @@ impl Message for Arc<BigPipeServer> {
             Ok(_) => self
                 .ingest_path_duration
                 .with_label_values(&["success"])
-                .observe(write_start.elapsed().as_millis() as f64),
+                .observe(write_start.elapsed().as_secs_f64()),
             Err(e) => {
                 warn!(?e, "unable to write message");
                 self.ingest_path_duration
                     .with_label_values(&["error"])
-                    .observe(write_start.elapsed().as_millis() as f64);
+                    .observe(write_start.elapsed().as_secs_f64());
                 return Err(Status::new(Code::Internal, "unable to process write"));
             }
         };
@@ -89,6 +103,7 @@ impl Message for Arc<BigPipeServer> {
         &self,
         request: Request<ReadMessageRequest>,
     ) -> Result<Response<Self::ReadStream>, Status> {
+        let read_start = Instant::now();
         debug!(
             remote_addr = %request.remote_addr().unwrap(),
             "client connection"
@@ -121,9 +136,17 @@ impl Message for Arc<BigPipeServer> {
                     info!("client disconnected");
                 });
                 let output_stream = ReceiverStream::new(rx);
+                self.read_path_duration
+                    .with_label_values(&["success"])
+                    .observe(read_start.elapsed().as_secs_f64());
                 Ok(Response::new(Box::pin(output_stream)))
             }
-            None => Err(Status::new(Code::NotFound, format!("{key} not found"))),
+            None => {
+                self.read_path_duration
+                    .with_label_values(&["not_found"])
+                    .observe(read_start.elapsed().as_secs_f64());
+                Err(Status::new(Code::NotFound, format!("{key} not found")))
+            }
         }
     }
 }

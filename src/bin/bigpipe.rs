@@ -61,6 +61,10 @@ enum Commands {
         #[arg(long, env = "BIGPIPE_ADDRESS", default_value = "0.0.0.0:7050")]
         addr: String,
 
+        /// Bind address for the server to expose Prometheus metrics.
+        #[arg(long, env = "BIGPIPE_METRICS_ADDRESS", default_value = "0.0.0.0:9090")]
+        metrics_addr: String,
+
         /// Directory where the write-ahead log (WAL) files will be written to.
         #[arg(long, env = "BIGPIPE_WAL_DIRECTORY", default_value = default_wal_directory().into_os_string() )]
         wal_directory: PathBuf,
@@ -121,6 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Server {
             addr,
+            metrics_addr,
             wal_directory,
             wal_segment_max_size,
             verbosity,
@@ -129,6 +134,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let metrics = Registry::new();
             let bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size, &metrics)?;
             let bigpipe_server = Arc::new(BigPipeServer::new(bigpipe, &metrics));
+
+            bigpipe::run_metrics_task(&metrics_addr, metrics).await?;
 
             Server::builder()
                 .add_service(MessageServer::new(Arc::clone(&bigpipe_server)))

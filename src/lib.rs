@@ -1,7 +1,10 @@
 pub mod client;
 pub mod data_types;
+mod metrics;
 pub mod server;
 mod wal;
+
+pub use metrics::run_metrics_task;
 
 use std::path::PathBuf;
 

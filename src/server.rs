@@ -1,10 +1,11 @@
 use std::{pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
-use prometheus::Registry;
+use prometheus::{HistogramOpts, HistogramVec, Registry};
+use tokio::time::Instant;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Code, Request, Response, Status};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     data_types::{
@@ -25,12 +26,28 @@ use crate::{
 /// it over HTTP/2 for incoming gRPC connections.
 pub struct BigPipeServer {
     inner: Mutex<BigPipe>,
+
+    ingest_path_duration: HistogramVec,
 }
 
 impl BigPipeServer {
     pub fn new(inner: BigPipe, metrics: &Registry) -> Self {
+        let ingest_path_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_ingest_path_duration_ms",
+                "Time taken for a write to traverse the full ingest path and a response is returned to the caller",
+            )
+            .buckets(vec![1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0, 1000.0]),
+            &["outcome"],
+        )
+        .unwrap();
+
+        metrics
+            .register(Box::new(ingest_path_duration.clone()))
+            .unwrap();
         Self {
             inner: Mutex::new(inner),
+            ingest_path_duration,
         }
     }
 }
@@ -44,13 +61,27 @@ impl Message for Arc<BigPipeServer> {
         &self,
         request: Request<SendMessageRequest>,
     ) -> Result<Response<SendMessageResponse>, Status> {
+        let write_start = Instant::now();
         let SendMessageRequest { key, value } = request.into_inner();
         debug!(key, value_size = value.len(), "received client message");
         let timestamp = chrono::Utc::now().timestamp_micros();
-        self.inner
+        match self
+            .inner
             .lock()
             .write(&ServerMessage::new(key, value.into(), timestamp))
-            .unwrap();
+        {
+            Ok(_) => self
+                .ingest_path_duration
+                .with_label_values(&["success"])
+                .observe(write_start.elapsed().as_millis() as f64),
+            Err(e) => {
+                warn!(?e, "unable to write message");
+                self.ingest_path_duration
+                    .with_label_values(&["error"])
+                    .observe(write_start.elapsed().as_millis() as f64);
+                return Err(Status::new(Code::Internal, "unable to process write"));
+            }
+        };
         Ok(Response::new(SendMessageResponse {}))
     }
 

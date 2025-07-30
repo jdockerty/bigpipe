@@ -9,6 +9,14 @@ use prometheus::{Encoder, Registry, TextEncoder};
 use tokio::net::TcpListener;
 use tracing::debug;
 
+#[derive(Clone)]
+struct HttpState {
+    metrics: Registry,
+}
+
+/// Run the metrics server in a separate background task,
+/// accepting calls to `/metrics` and returning the
+/// Prometheus text encoded metrics.
 pub async fn run_metrics_task(
     metrics_addr: &str,
     metrics: Registry,
@@ -23,11 +31,6 @@ pub async fn run_metrics_task(
             .expect("can run metrics server");
     });
     Ok(())
-}
-
-#[derive(Clone)]
-struct HttpState {
-    metrics: Registry,
 }
 
 async fn metrics_handler(State(state): State<HttpState>) -> impl IntoResponse {

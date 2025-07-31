@@ -73,6 +73,7 @@ impl BigPipeClient {
 mod test {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
+    use prometheus::Registry;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
     use tonic::transport::{server::TcpIncoming, Server};
@@ -91,8 +92,10 @@ mod test {
     // Utility for running a bigpipe server in the background
     fn run_server() -> (TempDir, SocketAddr) {
         let dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let bigpipe_server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
         let addr = SocketAddr::from_str("127.0.0.1:0").unwrap();
         let tcp = TcpIncoming::bind(addr).unwrap();

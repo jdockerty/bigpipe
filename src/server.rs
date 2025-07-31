@@ -1,9 +1,11 @@
 use std::{pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
+use prometheus::{HistogramOpts, HistogramVec, Registry};
+use tokio::time::Instant;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Code, Request, Response, Status};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     data_types::{
@@ -24,12 +26,41 @@ use crate::{
 /// it over HTTP/2 for incoming gRPC connections.
 pub struct BigPipeServer {
     inner: Mutex<BigPipe>,
+
+    ingest_path_duration: HistogramVec,
+    read_path_duration: HistogramVec,
 }
 
 impl BigPipeServer {
-    pub fn new(inner: BigPipe) -> Self {
+    pub fn new(inner: BigPipe, metrics: &Registry) -> Self {
+        let ingest_path_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_ingest_path_duration_seconds",
+                "Time taken for a write to traverse the full ingest path and a response is returned to the caller",
+            ),
+            &["outcome"],
+        )
+        .unwrap();
+
+        let read_path_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_read_path_duration_seconds",
+                "Time taken for a read to be surfaced",
+            ),
+            &["outcome"],
+        )
+        .unwrap();
+
+        metrics
+            .register(Box::new(ingest_path_duration.clone()))
+            .unwrap();
+        metrics
+            .register(Box::new(read_path_duration.clone()))
+            .unwrap();
         Self {
             inner: Mutex::new(inner),
+            ingest_path_duration,
+            read_path_duration,
         }
     }
 }
@@ -43,13 +74,27 @@ impl Message for Arc<BigPipeServer> {
         &self,
         request: Request<SendMessageRequest>,
     ) -> Result<Response<SendMessageResponse>, Status> {
+        let write_start = Instant::now();
         let SendMessageRequest { key, value } = request.into_inner();
         debug!(key, value_size = value.len(), "received client message");
         let timestamp = chrono::Utc::now().timestamp_micros();
-        self.inner
+        match self
+            .inner
             .lock()
             .write(&ServerMessage::new(key, value.into(), timestamp))
-            .unwrap();
+        {
+            Ok(_) => self
+                .ingest_path_duration
+                .with_label_values(&["success"])
+                .observe(write_start.elapsed().as_secs_f64()),
+            Err(e) => {
+                warn!(?e, "unable to write message");
+                self.ingest_path_duration
+                    .with_label_values(&["error"])
+                    .observe(write_start.elapsed().as_secs_f64());
+                return Err(Status::new(Code::Internal, "unable to process write"));
+            }
+        };
         Ok(Response::new(SendMessageResponse {}))
     }
 
@@ -57,6 +102,7 @@ impl Message for Arc<BigPipeServer> {
         &self,
         request: Request<ReadMessageRequest>,
     ) -> Result<Response<Self::ReadStream>, Status> {
+        let read_start = Instant::now();
         debug!(
             remote_addr = %request.remote_addr().unwrap(),
             "client connection"
@@ -89,9 +135,17 @@ impl Message for Arc<BigPipeServer> {
                     info!("client disconnected");
                 });
                 let output_stream = ReceiverStream::new(rx);
+                self.read_path_duration
+                    .with_label_values(&["success"])
+                    .observe(read_start.elapsed().as_secs_f64());
                 Ok(Response::new(Box::pin(output_stream)))
             }
-            None => Err(Status::new(Code::NotFound, format!("{key} not found"))),
+            None => {
+                self.read_path_duration
+                    .with_label_values(&["not_found"])
+                    .observe(read_start.elapsed().as_secs_f64());
+                Err(Status::new(Code::NotFound, format!("{key} not found")))
+            }
         }
     }
 }
@@ -148,6 +202,7 @@ mod test {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
+    use prometheus::Registry;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
     use tonic::{Code, Request};
@@ -171,8 +226,10 @@ mod test {
     #[tokio::test]
     async fn send_message() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         let resp = server
@@ -197,8 +254,10 @@ mod test {
     #[tokio::test]
     async fn read_messages() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         for i in 0..10 {
@@ -268,8 +327,10 @@ mod test {
     #[tokio::test]
     async fn create_namespace() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         let namespace = CreateNamespaceRequest {
@@ -300,8 +361,10 @@ mod test {
     #[tokio::test]
     async fn update_namespace() {
         let wal_dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
         let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap(),
+            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
+            &metrics,
         ));
 
         let update = UpdateNamespaceRequest {

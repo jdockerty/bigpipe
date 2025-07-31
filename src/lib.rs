@@ -9,7 +9,7 @@ pub use metrics::run_metrics_task;
 use std::path::PathBuf;
 
 use hashbrown::HashMap;
-use prometheus::{HistogramOpts, HistogramVec, Registry};
+use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
@@ -22,6 +22,8 @@ pub struct BigPipe {
     inner: HashMap<String, BigPipeValue>,
     /// Write ahead log to ensure durability of writes.
     wal: NamespaceWal,
+
+    received_messages: IntCounter,
 }
 
 impl BigPipe {
@@ -43,13 +45,23 @@ impl BigPipe {
         )
         .unwrap();
 
+        let received_messages =
+            IntCounter::new("bigpipe_received_messages", "Number of messages received").unwrap();
+
         metrics
             .register(Box::new(wal_replay_duration.clone()))
+            .unwrap();
+        metrics
+            .register(Box::new(received_messages.clone()))
             .unwrap();
 
         let inner = NamespaceWal::replay(&wal_directory, &wal_replay_duration);
         let wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
-        Ok(Self { wal, inner })
+        Ok(Self {
+            wal,
+            inner,
+            received_messages,
+        })
     }
 
     /// Write a message.

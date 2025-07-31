@@ -22,7 +22,12 @@ pub struct NamespaceWal {
     root_directory: PathBuf,
     max_segment_size: usize,
 
+    /// Counter for the total number of namespaces
+    /// that have been observed during this process'
+    /// lifetime.
     total_namespaces: IntCounter,
+    /// Distribution of time taken for different kinds
+    /// of writes to be applied to the underlying WAL.
     wal_write_duration: HistogramVec,
 }
 

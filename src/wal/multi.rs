@@ -193,6 +193,7 @@ mod test {
 
         multi.write(WalOperation::test_message(10)).unwrap();
         multi.flush("hello").unwrap();
+        assert_eq!(multi.total_namespaces.get(), 1);
 
         drop(multi);
 
@@ -220,6 +221,7 @@ mod test {
             .unwrap();
 
         multi.flush_all().unwrap();
+        assert_eq!(multi.total_namespaces.get(), 2);
 
         drop(multi);
 

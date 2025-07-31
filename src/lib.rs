@@ -23,6 +23,12 @@ pub struct BigPipe {
     /// Write ahead log to ensure durability of writes.
     wal: NamespaceWal,
 
+    /// Total number of messages received throughout the process
+    /// lifetime.
+    ///
+    /// A message is only considered "received" after it has
+    /// been made durable with a WAL write AND then added
+    /// to the in-memory map.
     received_messages: IntCounter,
 }
 
@@ -68,6 +74,7 @@ impl BigPipe {
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
         self.wal_write(message)?;
         self.add_message(message);
+        self.received_messages.inc();
         Ok(())
     }
 
@@ -190,6 +197,7 @@ mod tests {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();
         }
         bigpipe.wal.flush("hello").unwrap();
+        assert_eq!(bigpipe.received_messages.get(), 100);
 
         assert_eq!(
             bigpipe.get_message_range("hello", 10).unwrap(),

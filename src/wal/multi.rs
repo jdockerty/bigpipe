@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use hashbrown::HashMap;
 use parking_lot::Mutex;
-use prometheus::{Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Registry};
+use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
 use tokio::time::Instant;
 use walkdir::WalkDir;
 
@@ -41,7 +41,7 @@ impl NamespaceWal {
 
         let wal_write_duration = HistogramVec::new(
             HistogramOpts::new("bigpipe_wal_write_duraiton_ms", "Duration, in milliseconds, that it takes for a write to be made durable in the WAL"),
-            &["namespace"],
+            &["kind"],
         )
         .unwrap();
 
@@ -66,6 +66,7 @@ impl NamespaceWal {
     fn create_wal_directory(&self, namespace: &str) -> PathBuf {
         let wal_dir = PathBuf::from(format!("{}/{namespace}", self.root_directory.display()));
         std::fs::create_dir(&wal_dir).unwrap();
+        self.total_namespaces.inc();
         wal_dir
     }
 
@@ -103,13 +104,20 @@ impl NamespaceWal {
     /// Write a [`WalOperation`] to the respective [`Wal`]. The key within
     /// the operation is used as the namespace.
     pub fn write(&self, op: WalOperation) -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
         match &op {
             WalOperation::Message(msg) => {
                 self.write_under_lock(&msg.key, &op);
+                self.wal_write_duration
+                    .with_label_values(&["message"])
+                    .observe(start.elapsed().as_secs_f64());
                 Ok(())
             }
             WalOperation::Namespace(namespace) => {
                 self.write_under_lock(&namespace.key, &op);
+                self.wal_write_duration
+                    .with_label_values(&["namespace"])
+                    .observe(start.elapsed().as_secs_f64());
                 Ok(())
             }
         }

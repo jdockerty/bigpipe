@@ -3,6 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use hashbrown::HashMap;
 use parking_lot::Mutex;
+use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
+use tokio::time::Instant;
 use walkdir::WalkDir;
 
 use super::Wal;
@@ -19,15 +21,48 @@ pub struct NamespaceWal {
     namespaces: Arc<Mutex<HashMap<String, Wal>>>,
     root_directory: PathBuf,
     max_segment_size: usize,
+
+    /// Counter for the total number of namespaces
+    /// that have been observed during this process'
+    /// lifetime.
+    total_namespaces: IntCounter,
+    /// Distribution of time taken for different kinds
+    /// of writes to be applied to the underlying WAL.
+    wal_write_duration: HistogramVec,
 }
 
 impl NamespaceWal {
     /// Create a new instance of [`NamespaceWal`].
-    pub fn new(root_directory: PathBuf, max_segment_size: Option<usize>) -> Self {
+    pub fn new(
+        root_directory: PathBuf,
+        max_segment_size: Option<usize>,
+        metrics: &Registry,
+    ) -> Self {
+        let total_namespaces = IntCounter::new(
+            "bigpipe_wal_tracked_namespaces",
+            "Total namespaces being tracked over this processes lifetime",
+        )
+        .unwrap();
+
+        let wal_write_duration = HistogramVec::new(
+            HistogramOpts::new("bigpipe_wal_write_duraiton_ms", "Duration, in milliseconds, that it takes for a write to be made durable in the WAL"),
+            &["kind"],
+        )
+        .unwrap();
+
+        metrics
+            .register(Box::new(total_namespaces.clone()))
+            .unwrap();
+        metrics
+            .register(Box::new(wal_write_duration.clone()))
+            .unwrap();
+
         Self {
             namespaces: Arc::new(Mutex::new(HashMap::with_capacity(100))),
             root_directory,
             max_segment_size: max_segment_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
+            total_namespaces,
+            wal_write_duration,
         }
     }
 
@@ -36,6 +71,7 @@ impl NamespaceWal {
     fn create_wal_directory(&self, namespace: &str) -> PathBuf {
         let wal_dir = PathBuf::from(format!("{}/{namespace}", self.root_directory.display()));
         std::fs::create_dir(&wal_dir).unwrap();
+        self.total_namespaces.inc();
         wal_dir
     }
 
@@ -73,13 +109,20 @@ impl NamespaceWal {
     /// Write a [`WalOperation`] to the respective [`Wal`]. The key within
     /// the operation is used as the namespace.
     pub fn write(&self, op: WalOperation) -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
         match &op {
             WalOperation::Message(msg) => {
                 self.write_under_lock(&msg.key, &op);
+                self.wal_write_duration
+                    .with_label_values(&["message"])
+                    .observe(start.elapsed().as_secs_f64());
                 Ok(())
             }
             WalOperation::Namespace(namespace) => {
                 self.write_under_lock(&namespace.key, &op);
+                self.wal_write_duration
+                    .with_label_values(&["namespace"])
+                    .observe(start.elapsed().as_secs_f64());
                 Ok(())
             }
         }
@@ -99,7 +142,10 @@ impl NamespaceWal {
     /// └── foo <-- namespace 'foo'
     ///     ├── 0-bp.wal
     ///     └── 1-bp.wal
-    pub fn replay<P: AsRef<Path>>(directory: P) -> HashMap<String, BigPipeValue> {
+    pub fn replay<P: AsRef<Path>>(
+        directory: P,
+        wal_replay_duration: &HistogramVec,
+    ) -> HashMap<String, BigPipeValue> {
         let mut multi = HashMap::new();
         for entry in WalkDir::new(directory)
             .max_depth(1) // current directory only
@@ -110,7 +156,11 @@ impl NamespaceWal {
             // directory, as this counts as an entry.
             // Find a better way to do this.
             if entry.depth() == 1 {
+                let start = Instant::now();
                 let (_, inner) = Wal::replay(entry.path()).expect("should exist");
+                wal_replay_duration
+                    .with_label_values(&["namespace"])
+                    .observe(start.elapsed().as_secs_f64());
                 multi.extend(inner);
             }
         }
@@ -129,7 +179,8 @@ mod test {
     #[test]
     fn directory_structure() {
         let dir = TempDir::new().unwrap();
-        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
+        let metrics = Registry::new();
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
 
         let wal_dir = multi.create_wal_directory("my_new_namespace");
         assert_eq!(
@@ -142,10 +193,12 @@ mod test {
     #[test]
     fn ops() {
         let dir = TempDir::new().unwrap();
-        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
+        let metrics = Registry::new();
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
 
         multi.write(WalOperation::test_message(10)).unwrap();
         multi.flush("hello").unwrap();
+        assert_eq!(multi.total_namespaces.get(), 1);
 
         drop(multi);
 
@@ -161,7 +214,9 @@ mod test {
     #[test]
     fn replay() {
         let dir = TempDir::new().unwrap();
-        let multi = NamespaceWal::new(dir.path().to_path_buf(), None);
+        let metrics = Registry::new();
+
+        let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
 
         multi
             .write(WalOperation::test_message(10).with_key("foo"))
@@ -171,10 +226,19 @@ mod test {
             .unwrap();
 
         multi.flush_all().unwrap();
+        assert_eq!(multi.total_namespaces.get(), 2);
 
         drop(multi);
 
-        let multi = NamespaceWal::replay(dir.path());
+        let wal_replay_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_wal_replay_duration_seconds",
+                "Total time taken for a WAL replay to complete",
+            ),
+            &["namespace"],
+        )
+        .unwrap();
+        let multi = NamespaceWal::replay(dir.path(), &wal_replay_duration);
         assert_eq!(multi.keys().len(), 2);
         assert_eq!(
             multi.get("foo").unwrap().get_range(0),

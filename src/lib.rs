@@ -1,11 +1,15 @@
 pub mod client;
 pub mod data_types;
+mod metrics;
 pub mod server;
 mod wal;
+
+pub use metrics::run_metrics_task;
 
 use std::path::PathBuf;
 
 use hashbrown::HashMap;
+use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
 use tracing::debug;
 
 use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
@@ -18,25 +22,59 @@ pub struct BigPipe {
     inner: HashMap<String, BigPipeValue>,
     /// Write ahead log to ensure durability of writes.
     wal: NamespaceWal,
+
+    /// Total number of messages received throughout the process
+    /// lifetime.
+    ///
+    /// A message is only considered "received" after it has
+    /// been made durable with a WAL write AND then added
+    /// to the in-memory map.
+    received_messages: IntCounter,
 }
 
 impl BigPipe {
     pub fn try_new(
         wal_directory: PathBuf,
         wal_max_segment_size: Option<usize>,
+        metrics: &Registry,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         if !wal_directory.exists() {
             std::fs::create_dir_all(&wal_directory)?;
         }
-        let inner = NamespaceWal::replay(&wal_directory);
-        let wal = NamespaceWal::new(wal_directory, wal_max_segment_size);
-        Ok(Self { wal, inner })
+
+        let wal_replay_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_wal_replay_duration_seconds",
+                "Total time taken for a WAL replay to complete",
+            ),
+            &["namespace"],
+        )
+        .unwrap();
+
+        let received_messages =
+            IntCounter::new("bigpipe_received_messages", "Number of messages received").unwrap();
+
+        metrics
+            .register(Box::new(wal_replay_duration.clone()))
+            .unwrap();
+        metrics
+            .register(Box::new(received_messages.clone()))
+            .unwrap();
+
+        let inner = NamespaceWal::replay(&wal_directory, &wal_replay_duration);
+        let wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
+        Ok(Self {
+            wal,
+            inner,
+            received_messages,
+        })
     }
 
     /// Write a message.
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
         self.wal_write(message)?;
         self.add_message(message);
+        self.received_messages.inc();
         Ok(())
     }
 
@@ -92,6 +130,7 @@ impl BigPipe {
 
 #[cfg(test)]
 mod tests {
+    use prometheus::Registry;
     use tempfile::TempDir;
 
     use crate::{BigPipe, ServerMessage};
@@ -99,7 +138,8 @@ mod tests {
     #[test]
     fn add_messages() {
         let wal_dir = TempDir::new().unwrap();
-        let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new();
+        let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap();
 
         let msg_1 = ServerMessage::new(
             "hello".to_string(),
@@ -127,13 +167,15 @@ mod tests {
     #[test]
     fn wal_replay() {
         let dir = TempDir::new().unwrap();
-        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new();
+        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         bigpipe.write(&ServerMessage::test_message(1)).unwrap();
         bigpipe.wal.flush("hello").unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
-        let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new(); // use new registry, we cannot re-register metrics.
+        let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         let messages = bigpipe.get_messages("hello").unwrap();
         assert_eq!(messages.len(), 1);
@@ -148,12 +190,14 @@ mod tests {
     #[test]
     fn message_range() {
         let dir = TempDir::new().unwrap();
-        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None).unwrap();
+        let metrics = Registry::new();
+        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         for i in 0..100 {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();
         }
         bigpipe.wal.flush("hello").unwrap();
+        assert_eq!(bigpipe.received_messages.get(), 100);
 
         assert_eq!(
             bigpipe.get_message_range("hello", 10).unwrap(),

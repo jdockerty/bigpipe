@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::{path::PathBuf, sync::Arc};
 
 use hashbrown::HashMap;
@@ -29,6 +28,8 @@ pub struct NamespaceWal {
     /// Distribution of time taken for different kinds
     /// of writes to be applied to the underlying WAL.
     wal_write_duration: HistogramVec,
+
+    wal_replay_duration: HistogramVec,
 }
 
 impl NamespaceWal {
@@ -50,11 +51,23 @@ impl NamespaceWal {
         )
         .unwrap();
 
+        let wal_replay_duration = HistogramVec::new(
+            HistogramOpts::new(
+                "bigpipe_wal_replay_duration_seconds",
+                "Total time taken for a WAL replay to complete",
+            ),
+            &["namespace"],
+        )
+        .unwrap();
+
         metrics
             .register(Box::new(total_namespaces.clone()))
             .unwrap();
         metrics
             .register(Box::new(wal_write_duration.clone()))
+            .unwrap();
+        metrics
+            .register(Box::new(wal_replay_duration.clone()))
             .unwrap();
 
         Self {
@@ -63,6 +76,7 @@ impl NamespaceWal {
             max_segment_size: max_segment_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             total_namespaces,
             wal_write_duration,
+            wal_replay_duration,
         }
     }
 
@@ -142,12 +156,9 @@ impl NamespaceWal {
     /// └── foo <-- namespace 'foo'
     ///     ├── 0-bp.wal
     ///     └── 1-bp.wal
-    pub fn replay<P: AsRef<Path>>(
-        directory: P,
-        wal_replay_duration: &HistogramVec,
-    ) -> HashMap<String, BigPipeValue> {
+    pub fn replay(&mut self) -> HashMap<String, BigPipeValue> {
         let mut multi = HashMap::new();
-        for entry in WalkDir::new(directory)
+        for entry in WalkDir::new(&self.root_directory)
             .max_depth(1) // current directory only
             .into_iter()
         {
@@ -157,10 +168,18 @@ impl NamespaceWal {
             // Find a better way to do this.
             if entry.depth() == 1 {
                 let start = Instant::now();
-                let (_, inner) = Wal::replay(entry.path()).expect("should exist");
-                wal_replay_duration
+                let (id, inner) = Wal::replay(entry.path()).expect("should exist");
+                self.wal_replay_duration
                     .with_label_values(&["namespace"])
                     .observe(start.elapsed().as_secs_f64());
+                let wal = Wal::try_new(id + 1, entry.path().to_path_buf(), None).unwrap();
+                let namespace = entry
+                    .path()
+                    .file_name()
+                    .expect("basename is the namespace name")
+                    .to_string_lossy()
+                    .to_string();
+                self.namespaces.lock().insert(namespace, wal);
                 multi.extend(inner);
             }
         }
@@ -230,15 +249,9 @@ mod test {
 
         drop(multi);
 
-        let wal_replay_duration = HistogramVec::new(
-            HistogramOpts::new(
-                "bigpipe_wal_replay_duration_seconds",
-                "Total time taken for a WAL replay to complete",
-            ),
-            &["namespace"],
-        )
-        .unwrap();
-        let multi = NamespaceWal::replay(dir.path(), &wal_replay_duration);
+        let metrics = Registry::new();
+        let mut same_wal = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
+        let multi = same_wal.replay();
         assert_eq!(multi.keys().len(), 2);
         assert_eq!(
             multi.get("foo").unwrap().get_range(0),

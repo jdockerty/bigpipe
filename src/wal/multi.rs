@@ -28,7 +28,8 @@ pub struct NamespaceWal {
     /// Distribution of time taken for different kinds
     /// of writes to be applied to the underlying WAL.
     wal_write_duration: HistogramVec,
-
+    /// Distribution of time taken for a WAL replay
+    /// to complete.
     wal_replay_duration: HistogramVec,
 }
 

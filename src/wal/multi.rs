@@ -105,6 +105,10 @@ impl NamespaceWal {
             .try_for_each(|(_, wal)| wal.flush())
     }
 
+    /// Write the incoming operation for a namespace whilst taking
+    /// the internal namespace lock.
+    ///
+    /// When a namespace does not exist, it is eagerly created.
     fn write_under_lock(&self, namespace: &str, op: &WalOperation) {
         self.namespaces
             .lock()

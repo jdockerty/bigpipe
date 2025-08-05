@@ -14,7 +14,7 @@ use super::WAL_DEFAULT_ID;
 use super::WAL_EXTENSION;
 use crate::data_types::wal::segment_entry::Entry as EntryProto;
 use crate::data_types::wal::SegmentEntry as SegmentEntryProto;
-use crate::data_types::{BigPipeValue, RetentionPolicy, WalOperation};
+use crate::data_types::{BigPipeValue, Namespace, RetentionPolicy, WalOperation};
 use crate::ServerMessage;
 
 /// A write-ahead log (WAL) implementation.
@@ -56,7 +56,7 @@ impl Wal {
 
     /// Replay an individual [`Wal`], returning the inner data representation.
     /// This requires reading ALL segments that are available.
-    pub fn replay<P: AsRef<Path>>(directory: P) -> Option<(u64, HashMap<String, BigPipeValue>)> {
+    pub fn replay<P: AsRef<Path>>(directory: P) -> Option<(u64, HashMap<Namespace, BigPipeValue>)> {
         let mut highest_segment_id: u64 = WAL_DEFAULT_ID;
         let mut segment_paths = Vec::new();
 
@@ -95,7 +95,7 @@ impl Wal {
                     Ok(entry) => match entry.entry.expect("segment entry is encoded") {
                         EntryProto::MessageEntry(message_entry) => {
                             messages
-                                .entry(message_entry.key.to_string())
+                                .entry(Namespace::new(&message_entry.key))
                                 .and_modify(|occupied_messages: &mut BigPipeValue| {
                                     let message_entry = message_entry.clone();
                                     occupied_messages.push(ServerMessage::new(
@@ -116,7 +116,7 @@ impl Wal {
                         }
                         EntryProto::NamespaceEntry(namespace) => {
                             messages
-                                .entry(namespace.key)
+                                .entry(Namespace::new(&namespace.key))
                                 .and_modify(|v| {
                                     v.set_retention_policy(
                                         RetentionPolicy::try_from(namespace.retention_policy)
@@ -386,7 +386,7 @@ mod test {
         assert_eq!(last_segment_id, 24);
         assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
 
-        let contained_messages = messages.get("hello").unwrap().clone();
+        let contained_messages = messages.get(&Namespace::new("hello")).unwrap().clone();
         assert_eq!(contained_messages.len(), 100);
         for (i, msg) in contained_messages.into_iter().enumerate().take(100) {
             assert_eq!(msg, ServerMessage::test_message(i as i64));
@@ -435,7 +435,7 @@ mod test {
         let mut expected = BigPipeValue::new();
         expected.set_retention_policy(RetentionPolicy::Ttl);
 
-        let got = inner.get(namespace).unwrap().clone();
+        let got = inner.get(&Namespace::new(namespace)).unwrap().clone();
         assert_eq!(got.is_empty(), expected.is_empty());
         assert!(
             got.get(0).is_none(),

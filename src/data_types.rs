@@ -22,6 +22,12 @@ pub mod wal {
     tonic::include_proto!("wal");
 }
 
+/// Representation of a 'namespace' within BigPipe.
+///
+/// A namespace is used to partition incoming data
+/// by the provided name. This means that is also
+/// used to access data for a particular partition
+/// too.
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct Namespace(Arc<String>);
 

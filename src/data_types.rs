@@ -51,7 +51,7 @@ impl Display for Namespace {
 
 impl From<&str> for Namespace {
     fn from(value: &str) -> Self {
-        Self(Arc::new(value.to_string()))
+        Self::new(value)
     }
 }
 

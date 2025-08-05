@@ -8,6 +8,7 @@ use walkdir::WalkDir;
 
 use super::Wal;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
+use crate::data_types::Namespace;
 use crate::data_types::WalOperation;
 use crate::wal::WAL_DEFAULT_ID;
 use crate::BigPipeValue;
@@ -17,7 +18,7 @@ use crate::BigPipeValue;
 /// namespace.
 #[derive(Debug)]
 pub struct NamespaceWal {
-    namespaces: Arc<Mutex<HashMap<String, Wal>>>,
+    namespaces: Arc<Mutex<HashMap<Namespace, Wal>>>,
     root_directory: PathBuf,
     max_segment_size: usize,
 
@@ -83,7 +84,7 @@ impl NamespaceWal {
 
     /// Create the WAL directory structure that will be used for the underlying
     /// [`Wal`] for a particular key, returning the associated [`PathBuf`].
-    fn create_wal_directory(&self, namespace: &str) -> PathBuf {
+    fn create_wal_directory(&self, namespace: &Namespace) -> PathBuf {
         let wal_dir = PathBuf::from(format!("{}/{namespace}", self.root_directory.display()));
         std::fs::create_dir(&wal_dir).unwrap();
         self.total_namespaces.inc();
@@ -92,7 +93,7 @@ impl NamespaceWal {
 
     #[allow(dead_code)]
     /// Flush the [`Wal`] of a particular namespace.
-    pub(crate) fn flush(&self, namespace: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn flush(&self, namespace: &Namespace) -> Result<(), Box<dyn std::error::Error>> {
         self.namespaces.lock().get_mut(namespace).unwrap().flush()
     }
 
@@ -109,10 +110,10 @@ impl NamespaceWal {
     /// the internal namespace lock.
     ///
     /// When a namespace does not exist, it is eagerly created.
-    fn write_under_lock(&self, namespace: &str, op: &WalOperation) {
+    fn write_under_lock(&self, namespace: &Namespace, op: &WalOperation) {
         self.namespaces
             .lock()
-            .entry(namespace.to_string())
+            .entry(namespace.clone())
             .and_modify(|wal| {
                 wal.write(op.clone()).unwrap();
             })
@@ -131,14 +132,14 @@ impl NamespaceWal {
         let start = Instant::now();
         match &op {
             WalOperation::Message(msg) => {
-                self.write_under_lock(&msg.key, &op);
+                self.write_under_lock(&Namespace::new(&msg.key), &op);
                 self.wal_write_duration
                     .with_label_values(&["message"])
                     .observe(start.elapsed().as_secs_f64());
                 Ok(())
             }
             WalOperation::Namespace(namespace) => {
-                self.write_under_lock(&namespace.key, &op);
+                self.write_under_lock(&Namespace::new(&namespace.key), &op);
                 self.wal_write_duration
                     .with_label_values(&["namespace"])
                     .observe(start.elapsed().as_secs_f64());
@@ -161,7 +162,7 @@ impl NamespaceWal {
     /// └── foo <-- namespace 'foo'
     ///     ├── 0-bp.wal
     ///     └── 1-bp.wal
-    pub fn replay(&mut self) -> HashMap<String, BigPipeValue> {
+    pub fn replay(&mut self) -> HashMap<Namespace, BigPipeValue> {
         let mut multi = HashMap::new();
         for entry in WalkDir::new(&self.root_directory)
             .max_depth(1) // current directory only
@@ -178,12 +179,14 @@ impl NamespaceWal {
                     .with_label_values(&["namespace"])
                     .observe(start.elapsed().as_secs_f64());
                 let wal = Wal::try_new(id + 1, entry.path().to_path_buf(), None).unwrap();
-                let namespace = entry
-                    .path()
-                    .file_name()
-                    .expect("basename is the namespace name")
-                    .to_string_lossy()
-                    .to_string();
+                let namespace = Namespace::new(
+                    entry
+                        .path()
+                        .file_name()
+                        .expect("basename is the namespace name")
+                        .to_string_lossy()
+                        .as_ref(),
+                );
                 self.namespaces.lock().insert(namespace, wal);
                 multi.extend(inner);
             }
@@ -205,8 +208,8 @@ mod test {
         let dir = TempDir::new().unwrap();
         let metrics = Registry::new();
         let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
-
-        let wal_dir = multi.create_wal_directory("my_new_namespace");
+        let namespace = Namespace::new("my_new_namespace");
+        let wal_dir = multi.create_wal_directory(&namespace);
         assert_eq!(
             wal_dir.to_string_lossy(),
             format!("{}/my_new_namespace", dir.path().display())
@@ -221,16 +224,23 @@ mod test {
         let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
 
         multi.write(WalOperation::test_message(10)).unwrap();
-        multi.flush("hello").unwrap();
+        multi.flush(&Namespace::new("hello")).unwrap();
         assert_eq!(multi.total_namespaces.get(), 1);
 
         drop(multi);
 
         let previous_dir = format!("{}/hello", dir.path().display());
         let (_, inner) = Wal::replay(&previous_dir).unwrap();
-        assert_eq!(inner.get("hello").unwrap().get_range(0).len(), 1);
         assert_eq!(
-            inner.get("hello").unwrap().get_range(0),
+            inner
+                .get(&Namespace::new("hello"))
+                .unwrap()
+                .get_range(0)
+                .len(),
+            1
+        );
+        assert_eq!(
+            inner.get(&Namespace::new("hello")).unwrap().get_range(0),
             vec![ServerMessage::new("hello".to_string(), "world".into(), 10)]
         );
     }
@@ -259,11 +269,11 @@ mod test {
         let multi = same_wal.replay();
         assert_eq!(multi.keys().len(), 2);
         assert_eq!(
-            multi.get("foo").unwrap().get_range(0),
+            multi.get(&Namespace::new("foo")).unwrap().get_range(0),
             vec![ServerMessage::new("foo".to_string(), "world".into(), 10)]
         );
         assert_eq!(
-            multi.get("bar").unwrap().get_range(0),
+            multi.get(&Namespace::new("bar")).unwrap().get_range(0),
             vec![ServerMessage::new("bar".to_string(), "world".into(), 20)]
         );
     }

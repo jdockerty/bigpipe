@@ -17,7 +17,7 @@ use crate::{
             namespace_server::Namespace, CreateNamespaceRequest, CreateNamespaceResponse,
             UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
-        BigPipeValue, RetentionPolicy, ServerMessage,
+        BigPipeValue, Namespace as InternalNamespace, RetentionPolicy, ServerMessage,
     },
     BigPipe,
 };
@@ -161,7 +161,7 @@ impl Namespace for Arc<BigPipeServer> {
             retention_policy: _,
         } = request.into_inner();
 
-        match self.inner.lock().inner.entry(key.clone()) {
+        match self.inner.lock().inner.entry(key.as_str().into()) {
             hashbrown::hash_map::Entry::Occupied(_) => Err(Status::new(
                 Code::AlreadyExists,
                 format!("{key} already exists"),
@@ -184,7 +184,12 @@ impl Namespace for Arc<BigPipeServer> {
 
         let retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
 
-        match self.inner.lock().inner.get_key_value_mut(&key) {
+        match self
+            .inner
+            .lock()
+            .inner
+            .get_key_value_mut(&InternalNamespace::new(&key))
+        {
             Some((_, value)) => {
                 value.set_retention_policy(retention_policy);
                 Ok(Response::new(UpdateNamespaceResponse { key }))
@@ -214,10 +219,10 @@ mod test {
                 SendMessageRequest, SendMessageResponse,
             },
             namespace::{
-                namespace_server::Namespace, CreateNamespaceRequest, UpdateNamespaceRequest,
-                UpdateNamespaceResponse,
+                namespace_server::Namespace as NamespaceServer, CreateNamespaceRequest,
+                UpdateNamespaceRequest, UpdateNamespaceResponse,
             },
-            RetentionPolicy, ServerMessage,
+            Namespace, RetentionPolicy, ServerMessage,
         },
         server::BigPipeServer,
         BigPipe,
@@ -242,12 +247,16 @@ mod test {
 
         let bigpipe = server.inner.lock();
         let messages = bigpipe.messages();
-        assert_eq!(messages.get("hello").unwrap().len(), 1);
+        assert_eq!(messages.get(&Namespace::new("hello")).unwrap().len(), 1);
         assert_matches!(
-            messages.get("hello").unwrap().get(0).unwrap(),
+            messages
+                .get(&Namespace::new("hello"))
+                .unwrap()
+                .get(0)
+                .unwrap(),
             ServerMessage { .. }
         );
-        assert!(messages.get("no_msg").is_none());
+        assert!(messages.get(&Namespace::new("no_msg")).is_none());
         assert_eq!(resp.into_inner(), SendMessageResponse {});
     }
 
@@ -267,7 +276,12 @@ mod test {
                 .write(&ServerMessage::test_message(i))
                 .unwrap();
         }
-        server.inner.lock().wal.flush("hello").unwrap();
+        server
+            .inner
+            .lock()
+            .wal
+            .flush(&Namespace::new("hello"))
+            .unwrap();
 
         let messages = server
             .read(Request::new(ReadMessageRequest {

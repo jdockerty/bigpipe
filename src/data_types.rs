@@ -2,9 +2,12 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use wal::{segment_entry, SegmentEntry as SegmentEntryProto};
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
+use std::{
+    fmt::Display,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 pub mod message {
@@ -17,6 +20,39 @@ pub mod namespace {
 
 pub mod wal {
     tonic::include_proto!("wal");
+}
+
+/// Representation of a 'namespace' within BigPipe.
+///
+/// A namespace is used to partition incoming data
+/// by the provided name. This means that is also
+/// used to access data for a particular partition
+/// too.
+#[derive(Debug, Hash, PartialEq, Eq)]
+pub struct Namespace(Arc<String>);
+
+impl Namespace {
+    pub fn new(namespace: &str) -> Self {
+        Self(Arc::new(namespace.to_string()))
+    }
+}
+
+impl Clone for Namespace {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl Display for Namespace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for Namespace {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, prost::Enumeration, clap::ValueEnum)]

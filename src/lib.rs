@@ -12,15 +12,18 @@ use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 use tracing::debug;
 
-use data_types::{BigPipeValue, ServerMessage, WalMessageEntry};
+use data_types::{BigPipeValue, Namespace, ServerMessage, WalMessageEntry};
 use wal::NamespaceWal;
 
 #[derive(Debug)]
 pub struct BigPipe {
     /// Internal queue to hold ordered messages as they are received,
-    /// partitioned by their key.
-    inner: HashMap<String, BigPipeValue>,
+    /// partitioned by their namespace.
+    inner: HashMap<Namespace, BigPipeValue>,
     /// Write ahead log to ensure durability of writes.
+    ///
+    /// This is composed of multiple WALs, partitioned by
+    /// [`Namespace`] to isolate data.
     wal: NamespaceWal,
 
     /// Total number of messages received throughout the process
@@ -69,7 +72,7 @@ impl BigPipe {
     /// Add a message to the internal structure.
     fn add_message(&mut self, message: &ServerMessage) {
         self.inner
-            .entry(message.key().to_string())
+            .entry(Namespace::new(message.key()))
             .and_modify(|messages| {
                 debug!(key = message.key(), "updating");
                 messages.push(message.clone())
@@ -84,8 +87,8 @@ impl BigPipe {
 
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
-    pub fn get_messages(&self, partition_key: &str) -> Option<BigPipeValue> {
-        self.inner.get(partition_key).cloned()
+    pub fn get_messages(&self, namespace: &str) -> Option<BigPipeValue> {
+        self.inner.get(&Namespace::new(namespace)).cloned()
     }
 
     /// Get a range of messages starting from the `offset`.
@@ -99,7 +102,7 @@ impl BigPipe {
     }
 
     /// Get all messages.
-    pub fn messages(&self) -> HashMap<String, BigPipeValue> {
+    pub fn messages(&self) -> HashMap<Namespace, BigPipeValue> {
         self.inner.clone()
     }
 
@@ -121,7 +124,7 @@ mod tests {
     use prometheus::Registry;
     use tempfile::TempDir;
 
-    use crate::{BigPipe, ServerMessage};
+    use crate::{data_types::Namespace, BigPipe, ServerMessage};
 
     #[test]
     fn add_messages() {
@@ -159,7 +162,7 @@ mod tests {
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         bigpipe.write(&ServerMessage::test_message(1)).unwrap();
-        bigpipe.wal.flush("hello").unwrap();
+        bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
         let metrics = Registry::new(); // use new registry, we cannot re-register metrics.
@@ -184,7 +187,7 @@ mod tests {
         for i in 0..100 {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();
         }
-        bigpipe.wal.flush("hello").unwrap();
+        bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
         assert_eq!(bigpipe.received_messages.get(), 100);
 
         assert_eq!(

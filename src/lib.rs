@@ -1,6 +1,7 @@
 pub mod client;
 pub mod data_types;
 mod metrics;
+mod retention;
 pub mod server;
 mod wal;
 

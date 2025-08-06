@@ -6,14 +6,15 @@ pub mod server;
 mod wal;
 
 pub use metrics::run_metrics_task;
+use retention::{RetentionManager, RetentionMessage};
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 use tracing::debug;
 
-use data_types::{BigPipeValue, Namespace, ServerMessage, WalMessageEntry};
+use data_types::{BigPipeValue, Namespace, RetentionPolicy, ServerMessage, WalMessageEntry};
 use wal::NamespaceWal;
 
 #[derive(Debug)]
@@ -26,6 +27,8 @@ pub struct BigPipe {
     /// This is composed of multiple WALs, partitioned by
     /// [`Namespace`] to isolate data.
     wal: NamespaceWal,
+
+    retention_manager: RetentionManager,
 
     /// Total number of messages received throughout the process
     /// lifetime.
@@ -55,18 +58,44 @@ impl BigPipe {
 
         let mut wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
         let inner = wal.replay();
+
+        let retention_manager = RetentionManager::new();
         Ok(Self {
             wal,
             inner,
             received_messages,
+            retention_manager,
         })
     }
 
     /// Write a message.
-    pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn write(
+        &mut self,
+        message: &ServerMessage,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.wal_write(message)?;
         self.add_message(message);
         self.received_messages.inc();
+
+        let v = self.inner.get(&Namespace::new(message.key())).unwrap();
+        match v.retention_policy() {
+            RetentionPolicy::Ttl => {
+                self.retention_manager
+                    .check_policy(RetentionMessage::Ttl {
+                        namespace: Namespace::new(message.key()),
+                        max_duration: Duration::from_secs(1),
+                        values: Arc::new(v.clone()),
+                    })
+                    .await;
+            }
+            RetentionPolicy::DiskPressure => {
+                self.retention_manager
+                    .check_policy(RetentionMessage::DiskPressure {
+                        namespace: Namespace::new(message.key()),
+                    })
+                    .await;
+            }
+        }
         Ok(())
     }
 
@@ -156,13 +185,16 @@ mod tests {
         assert!(q.get_messages("key_doesnt_exist").is_none());
     }
 
-    #[test]
-    fn wal_replay() {
+    #[tokio::test]
+    async fn wal_replay() {
         let dir = TempDir::new().unwrap();
         let metrics = Registry::new();
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
-        bigpipe.write(&ServerMessage::test_message(1)).unwrap();
+        bigpipe
+            .write(&ServerMessage::test_message(1))
+            .await
+            .unwrap();
         bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
         drop(bigpipe); // drop to demonstrate replay capability
 
@@ -179,14 +211,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn message_range() {
+    #[tokio::test]
+    async fn message_range() {
         let dir = TempDir::new().unwrap();
         let metrics = Registry::new();
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
         for i in 0..100 {
-            bigpipe.write(&ServerMessage::test_message(i)).unwrap();
+            bigpipe
+                .write(&ServerMessage::test_message(i))
+                .await
+                .unwrap();
         }
         bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
         assert_eq!(bigpipe.received_messages.get(), 100);

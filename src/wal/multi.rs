@@ -8,8 +8,8 @@ use walkdir::WalkDir;
 
 use super::Wal;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
-use crate::data_types::Namespace;
-use crate::data_types::WalOperation;
+use crate::data_types::namespace::Namespace;
+use crate::data_types::wal::WalOperation;
 use crate::wal::WAL_DEFAULT_ID;
 use crate::BigPipeValue;
 
@@ -197,7 +197,7 @@ impl NamespaceWal {
 
 #[cfg(test)]
 mod test {
-    use crate::data_types::ServerMessage;
+    use crate::data_types::message::ServerMessage;
 
     use super::*;
 

@@ -2,10 +2,10 @@ use tokio_stream::{Stream, StreamExt};
 use tonic::{transport::Channel, Status};
 
 use crate::data_types::{
-    message::{
+    message::ClientMessage,
+    message_proto::{
         message_client::MessageClient, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
     },
-    ClientMessage,
 };
 
 pub struct BigPipeClient {
@@ -81,9 +81,9 @@ mod test {
     use crate::{
         client::BigPipeClient,
         data_types::{
-            message::{message_server::MessageServer, ReadMessageResponse},
-            namespace::namespace_server::NamespaceServer,
-            ClientMessage,
+            message::ClientMessage,
+            message_proto::{message_server::MessageServer, ReadMessageResponse},
+            namespace_proto::namespace_server::NamespaceServer,
         },
         server::BigPipeServer,
         BigPipe,

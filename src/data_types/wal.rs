@@ -4,6 +4,15 @@ use super::value::RetentionPolicy;
 use wal::segment_entry;
 use wal::SegmentEntry as SegmentEntryProto;
 
+// HACK:
+//
+// The WAL relies upon importing the RetentionPolicy proto which resides here.
+// So this must be included so that it can also find it here through
+// `super::namespace::RetentionPolicy`.
+mod namespace {
+    tonic::include_proto!("namespace");
+}
+
 pub mod wal {
     tonic::include_proto!("wal");
 }

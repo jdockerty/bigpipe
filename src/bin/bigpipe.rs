@@ -9,12 +9,13 @@ use tonic::transport::Server;
 use bigpipe::{
     client::BigPipeClient,
     data_types::{
-        message::message_server::MessageServer,
-        namespace::{
+        message::ClientMessage,
+        message_proto::message_server::MessageServer,
+        namespace_proto::{
             namespace_client::NamespaceClient, namespace_server::NamespaceServer,
             CreateNamespaceRequest,
         },
-        ClientMessage, RetentionPolicy,
+        value::RetentionPolicy,
     },
     server::BigPipeServer,
     BigPipe,

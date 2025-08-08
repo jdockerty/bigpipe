@@ -12,9 +12,11 @@ use super::DEFAULT_MAX_SEGMENT_SIZE;
 use super::MAX_SEGMENT_BUFFER_SIZE;
 use super::WAL_DEFAULT_ID;
 use super::WAL_EXTENSION;
-use crate::data_types::wal::segment_entry::Entry as EntryProto;
-use crate::data_types::wal::SegmentEntry as SegmentEntryProto;
-use crate::data_types::{BigPipeValue, Namespace, RetentionPolicy, WalOperation};
+use crate::data_types::wal_proto::segment_entry::Entry as EntryProto;
+use crate::data_types::wal_proto::SegmentEntry as SegmentEntryProto;
+use crate::data_types::{
+    namespace::Namespace, value::BigPipeValue, value::RetentionPolicy, wal::WalOperation,
+};
 use crate::ServerMessage;
 
 /// A write-ahead log (WAL) implementation.
@@ -293,7 +295,7 @@ fn parse_segment_id(entry: &DirEntry) -> u64 {
 mod test {
     use tempfile::TempDir;
 
-    use crate::data_types::{RetentionPolicy, WalNamespaceEntry};
+    use crate::data_types::{value::RetentionPolicy, wal::WalNamespaceEntry};
 
     use super::*;
 

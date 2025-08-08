@@ -12,7 +12,9 @@ use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 use tracing::debug;
 
-use data_types::{BigPipeValue, Namespace, ServerMessage, WalMessageEntry};
+use data_types::{
+    message::ServerMessage, namespace::Namespace, value::BigPipeValue, wal::WalMessageEntry,
+};
 use wal::NamespaceWal;
 
 #[derive(Debug)]
@@ -110,7 +112,7 @@ impl BigPipe {
     pub fn wal_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: keep this as a WalOperation and allow callee to decide on inbound op?
         self.wal
-            .write(data_types::WalOperation::Message(WalMessageEntry {
+            .write(data_types::wal::WalOperation::Message(WalMessageEntry {
                 key: message.key().to_string(),
                 value: message.value(),
                 timestamp: message.timestamp(),
@@ -124,7 +126,7 @@ mod tests {
     use prometheus::Registry;
     use tempfile::TempDir;
 
-    use crate::{data_types::Namespace, BigPipe, ServerMessage};
+    use crate::{data_types::namespace::Namespace, BigPipe, ServerMessage};
 
     #[test]
     fn add_messages() {

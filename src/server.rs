@@ -9,15 +9,17 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     data_types::{
-        message::{
+        message::ServerMessage,
+        message_proto::{
             message_server::Message, ReadMessageRequest, ReadMessageResponse, SendMessageRequest,
             SendMessageResponse,
         },
-        namespace::{
+        namespace::Namespace as InternalNamespace,
+        namespace_proto::{
             namespace_server::Namespace, CreateNamespaceRequest, CreateNamespaceResponse,
             UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
-        BigPipeValue, Namespace as InternalNamespace, RetentionPolicy, ServerMessage,
+        value::{BigPipeValue, RetentionPolicy},
     },
     BigPipe,
 };
@@ -214,15 +216,17 @@ mod test {
 
     use crate::{
         data_types::{
-            message::{
+            message::ServerMessage,
+            message_proto::{
                 message_server::Message, ReadMessageRequest, ReadMessageResponse,
                 SendMessageRequest, SendMessageResponse,
             },
-            namespace::{
+            namespace::Namespace,
+            namespace_proto::{
                 namespace_server::Namespace as NamespaceServer, CreateNamespaceRequest,
                 UpdateNamespaceRequest, UpdateNamespaceResponse,
             },
-            Namespace, RetentionPolicy, ServerMessage,
+            value::RetentionPolicy,
         },
         server::BigPipeServer,
         BigPipe,
@@ -427,7 +431,7 @@ mod test {
                 .get_messages(&new_update.key)
                 .unwrap()
                 .retention_policy(),
-            &crate::data_types::RetentionPolicy::DiskPressure
+            &RetentionPolicy::DiskPressure
         );
     }
 }

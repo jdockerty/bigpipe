@@ -13,6 +13,11 @@ mod namespace {
     tonic::include_proto!("namespace");
 }
 
+// tonic requires that this is contained within a module
+// that has the same name as the proto file.
+//
+// This is renamed to NAME_proto in the `data_types` module file.
+#[expect(clippy::module_inception)]
 pub mod wal {
     tonic::include_proto!("wal");
 }

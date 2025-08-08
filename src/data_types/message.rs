@@ -1,6 +1,11 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
+// tonic requires that this is contained within a module
+// that has the same name as the proto file.
+//
+// This is renamed to NAME_proto in the `data_types` module file.
+#[expect(clippy::module_inception)]
 pub mod message {
     tonic::include_proto!("message");
 }

@@ -1,7 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
-use parking_lot::Mutex;
 use prometheus::{HistogramOpts, HistogramVec, Registry};
+use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Code, Request, Response, Status};
@@ -81,7 +81,9 @@ impl Message for Arc<BigPipeServer> {
         match self
             .inner
             .lock()
+            .await
             .write(&ServerMessage::new(key, value.into(), timestamp))
+            .await
         {
             Ok(_) => self
                 .ingest_path_duration
@@ -108,7 +110,7 @@ impl Message for Arc<BigPipeServer> {
             "client connection"
         );
         let ReadMessageRequest { key, offset } = request.into_inner();
-        match self.inner.lock().get_message_range(&key, offset) {
+        match self.inner.lock().await.get_message_range(&key, offset) {
             Some(messages) => {
                 let messages = messages
                     .iter()
@@ -161,7 +163,7 @@ impl Namespace for Arc<BigPipeServer> {
             retention_policy: _,
         } = request.into_inner();
 
-        match self.inner.lock().inner.entry(key.as_str().into()) {
+        match self.inner.lock().await.inner.entry(key.as_str().into()) {
             hashbrown::hash_map::Entry::Occupied(_) => Err(Status::new(
                 Code::AlreadyExists,
                 format!("{key} already exists"),
@@ -187,6 +189,7 @@ impl Namespace for Arc<BigPipeServer> {
         match self
             .inner
             .lock()
+            .await
             .inner
             .get_key_value_mut(&InternalNamespace::new(&key))
         {
@@ -245,7 +248,7 @@ mod test {
             .await
             .unwrap();
 
-        let bigpipe = server.inner.lock();
+        let bigpipe = server.inner.lock().await;
         let messages = bigpipe.messages();
         assert_eq!(messages.get(&Namespace::new("hello")).unwrap().len(), 1);
         assert_matches!(
@@ -273,12 +276,15 @@ mod test {
             server
                 .inner
                 .lock()
+                .await
                 .write(&ServerMessage::test_message(i))
+                .await
                 .unwrap();
         }
         server
             .inner
             .lock()
+            .await
             .wal
             .flush(&Namespace::new("hello"))
             .unwrap();
@@ -316,7 +322,13 @@ mod test {
 
         let partial_messages = messages.collect::<Vec<_>>().await;
         assert_eq!(
-            server.inner.lock().get_messages("hello").unwrap().len(),
+            server
+                .inner
+                .lock()
+                .await
+                .get_messages("hello")
+                .unwrap()
+                .len(),
             10,
             "The 'hello' key should contain a total of 10 messages"
         );
@@ -424,6 +436,7 @@ mod test {
             server
                 .inner
                 .lock()
+                .await
                 .get_messages(&new_update.key)
                 .unwrap()
                 .retention_policy(),

@@ -23,3 +23,9 @@ key: string
 value: bytes
 timestamp: i64
 ```
+
+### Retention
+
+In a similar manner to Kafka, either a time-to-live (TTL) or disk pressure causes segments to be deleted.
+
+This happens to **closed segments only**.

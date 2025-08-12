@@ -19,9 +19,6 @@ use wal::NamespaceWal;
 
 #[derive(Debug)]
 pub struct BigPipe {
-    /// Internal queue to hold ordered messages as they are received,
-    /// partitioned by their namespace.
-    inner: HashMap<Namespace, BigPipeValue>,
     /// Write ahead log to ensure durability of writes.
     ///
     /// This is composed of multiple WALs, partitioned by
@@ -54,11 +51,9 @@ impl BigPipe {
             .register(Box::new(received_messages.clone()))
             .unwrap();
 
-        let mut wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
-        let inner = wal.replay();
+        let wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
         Ok(Self {
             wal,
-            inner,
             received_messages,
         })
     }
@@ -66,31 +61,14 @@ impl BigPipe {
     /// Write a message.
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
         self.wal_write(message)?;
-        self.add_message(message);
         self.received_messages.inc();
         Ok(())
-    }
-
-    /// Add a message to the internal structure.
-    fn add_message(&mut self, message: &ServerMessage) {
-        self.inner
-            .entry(Namespace::new(message.key()))
-            .and_modify(|messages| {
-                debug!(key = message.key(), "updating");
-                messages.push(message.clone())
-            })
-            .or_insert_with(|| {
-                debug!(key = message.key(), "new key");
-                let mut messages = BigPipeValue::new();
-                messages.push(message.clone());
-                messages
-            });
     }
 
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
     pub fn get_messages(&self, namespace: &str) -> Option<BigPipeValue> {
-        self.inner.get(&Namespace::new(namespace)).cloned()
+        unimplemented!()
     }
 
     /// Get a range of messages starting from the `offset`.
@@ -105,7 +83,7 @@ impl BigPipe {
 
     /// Get all messages.
     pub fn messages(&self) -> HashMap<Namespace, BigPipeValue> {
-        self.inner.clone()
+        unimplemented!()
     }
 
     /// Write to the underlying WAL.
@@ -130,6 +108,7 @@ mod tests {
 
     #[test]
     fn add_messages() {
+        todo!();
         let wal_dir = TempDir::new().unwrap();
         let metrics = Registry::new();
         let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap();
@@ -147,7 +126,7 @@ mod tests {
         );
 
         for msg in [msg_1.clone(), msg_2.clone()] {
-            q.add_message(&msg);
+            // q.add_message(&msg);
         }
 
         let messages = q.messages();

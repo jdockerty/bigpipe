@@ -119,8 +119,7 @@ impl NamespaceWal {
             })
             .or_insert_with(|| {
                 let wal_dir = self.create_wal_directory(namespace);
-                let mut wal =
-                    Wal::try_new(WAL_DEFAULT_ID, wal_dir, Some(self.max_segment_size)).unwrap();
+                let mut wal = Wal::try_new(wal_dir, Some(self.max_segment_size)).unwrap();
                 wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
                 wal
             });
@@ -171,7 +170,7 @@ impl NamespaceWal {
                 self.wal_replay_duration
                     .with_label_values(&["namespace"])
                     .observe(start.elapsed().as_secs_f64());
-                let wal = Wal::try_new(id + 1, entry.path().to_path_buf(), None).unwrap();
+                let wal = Wal::try_new(entry.path().to_path_buf(), None).unwrap();
                 let namespace = Namespace::new(
                     entry
                         .path()

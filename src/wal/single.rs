@@ -23,28 +23,44 @@ use crate::ServerMessage;
 /// becoming available to consumers.
 #[derive(Debug)]
 pub struct Wal {
-    id: u64,
     active_segment: Segment,
     segment_max_size: usize,
     closed_segments: Vec<u64>,
     directory: PathBuf,
 }
 
+fn find_last_segment_id(path: impl AsRef<Path>) -> u64 {
+    let d = walkdir::WalkDir::new(&path)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().to_string_lossy().contains(WAL_EXTENSION));
+
+    let mut highest_segment_id = WAL_DEFAULT_ID;
+    for e in d {
+        let segment_id = parse_segment_id(&e);
+        if segment_id >= highest_segment_id {
+            highest_segment_id = segment_id;
+        }
+    }
+    highest_segment_id
+}
+
 impl Wal {
     pub fn try_new(
-        id: u64,
         directory: PathBuf,
         segment_max_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let last_segment_id = find_last_segment_id(&directory);
         // When non-zero segments are provided, a system invariant
         // here assumes that the IDs are monotonically increasing.
         //
         // In other words, if '5' is given, segments 0..=4 MUST
         // already exists.
-        let closed_segments = (0..id).collect::<Vec<_>>();
+        let closed_segments = (0..last_segment_id).collect::<Vec<_>>();
 
+        let id = last_segment_id + 1;
         Ok(Self {
-            id,
             directory: directory.clone(),
             segment_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             active_segment: Segment::try_new(id, directory.join(format!("{id}{WAL_EXTENSION}")))?,
@@ -143,9 +159,8 @@ impl Wal {
         // Force a flush to ensure that no data is lost before rotation.
         self.active_segment.flush()?;
 
-        let current_id = self.id;
-        self.id += 1;
-        let next_id = self.id;
+        let current_id = self.active_segment.id();
+        let next_id = current_id + 1;
         let next_path = self.directory.join(format!("{}{WAL_EXTENSION}", next_id));
         let (last_id, new_segment) = self.active_segment.next_segment(next_path.clone());
         self.active_segment = new_segment;
@@ -300,25 +315,25 @@ mod test {
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
+        let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
 
         let expected_path = dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}"));
         assert!(expected_path.exists());
         assert_eq!(wal.active_segment.path(), &expected_path);
-        assert_eq!(wal.id, 0);
+        assert_eq!(wal.active_segment.id(), 0);
 
         wal.rotate().unwrap();
         let expected_path = dir.path().join(format!("1{WAL_EXTENSION}"));
         assert!(expected_path.exists());
         assert_eq!(wal.active_segment.path(), &expected_path);
-        assert_eq!(wal.id, 1);
+        assert_eq!(wal.active_segment.id(), 1);
     }
 
     #[test]
     fn write() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
+        let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
 
         wal.write(WalOperation::test_message(0)).unwrap();
         wal.flush().unwrap();
@@ -335,7 +350,7 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(24)).unwrap();
+        let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(24)).unwrap();
 
         // Known size of the write
         let server_msg_size = 17;
@@ -345,7 +360,7 @@ mod test {
             wal.flush().unwrap();
         }
 
-        assert_eq!(wal.id, 1, "Expected rotation");
+        assert_eq!(wal.active_segment.id(), 1, "Expected rotation");
 
         assert_eq!(
             wal.active_segment.file.metadata().unwrap().len(),
@@ -368,12 +383,7 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         const TINY_SEGMENT_SIZE: usize = 64;
-        let mut wal = Wal::try_new(
-            WAL_DEFAULT_ID,
-            dir.path().to_path_buf(),
-            Some(TINY_SEGMENT_SIZE),
-        )
-        .unwrap();
+        let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
 
         for i in 0..100 {
             wal.write(WalOperation::test_message(i)).unwrap();
@@ -392,22 +402,12 @@ mod test {
         }
 
         assert!(
-            Wal::try_new(
-                last_segment_id,
-                dir.path().to_path_buf(),
-                Some(TINY_SEGMENT_SIZE),
-            )
-            .is_err(),
+            Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE),).is_err(),
             "Creating segment with same ID is not allowed"
         );
 
         assert!(
-            Wal::try_new(
-                last_segment_id + 1,
-                dir.path().to_path_buf(),
-                Some(TINY_SEGMENT_SIZE),
-            )
-            .is_ok(),
+            Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE),).is_ok(),
             "Segment should be +1 from last"
         );
     }
@@ -416,16 +416,18 @@ mod test {
     fn closed_segments() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), Some(64)).unwrap();
+        let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(64)).unwrap();
 
         for i in 0..10 {
             wal.write(WalOperation::test_message(i)).unwrap();
             wal.flush().unwrap();
+            wal.rotate().unwrap();
         }
-        assert_eq!(wal.closed_segments().len(), 2);
+        assert_eq!(wal.closed_segments().len(), 10);
 
-        let wal = Wal::try_new(10, dir.path().to_path_buf(), None).unwrap();
+        let wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
         assert_eq!(wal.closed_segments().len(), 10); // 0-base index, 0..=9 is 10 closed segments
+        assert_eq!(wal.active_segment.id(), 11);
     }
 
     #[test]
@@ -460,5 +462,21 @@ mod test {
             segment_two_size as u64,
             std::fs::metadata(&segment_two_path).unwrap().len()
         );
+    }
+
+    #[test]
+    fn find_correct_segment_ids() {
+        let dir = TempDir::new().unwrap();
+
+        let _segment_paths: Vec<PathBuf> = (1..=5)
+            .map(|i| {
+                let path = dir.path().join(format!("{i}{WAL_EXTENSION}"));
+                // discard the segment, we just need it creating
+                Segment::try_new(i, path.clone()).unwrap();
+                path
+            })
+            .collect();
+
+        assert_eq!(find_last_segment_id(dir.path()), 5);
     }
 }

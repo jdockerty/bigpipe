@@ -174,7 +174,6 @@ impl Wal {
             "rotating wal segment"
         );
 
-        self.active_segment = Segment::try_new(next_id, next_path)?;
         // Push the previously held 'current' only once the new segment is opened
         self.closed_segments.push(last_id.0);
         Ok(())

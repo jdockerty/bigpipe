@@ -1,6 +1,8 @@
 use std::fmt::Display;
 use std::sync::Arc;
 
+use super::value::RetentionPolicy;
+
 // tonic requires that this is contained within a module
 // that has the same name as the proto file.
 //
@@ -41,4 +43,8 @@ impl From<&str> for Namespace {
     fn from(value: &str) -> Self {
         Self::new(value)
     }
+}
+
+pub struct NamespaceConfig {
+    retention_policy: RetentionPolicy,
 }

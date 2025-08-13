@@ -47,11 +47,10 @@ impl Wal {
 
         Ok(Self {
             id,
+            message_offset_index: HashMap::new(),
             directory: directory.clone(),
-            active_segment: Segment::try_new(
-                directory.join(format!("{id}{WAL_EXTENSION}")),
-                segment_max_size,
-            )?,
+            segment_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
+            active_segment: Segment::try_new(id, directory.join(format!("{id}{WAL_EXTENSION}")))?,
             closed_segments,
         })
     }
@@ -148,7 +147,7 @@ impl Wal {
 
     /// Write a message into the write-ahead log.
     pub fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
-        if self.active_segment.current_size >= self.active_segment.max_size {
+        if self.active_segment.current_size >= self.segment_max_size {
             self.rotate()?;
         }
         self.active_segment.write(op)
@@ -169,19 +168,21 @@ impl Wal {
         self.id += 1;
         let next_id = self.id;
         let next_path = self.directory.join(format!("{}{WAL_EXTENSION}", next_id));
+        let (last_id, new_segment) = self.active_segment.next_segment(next_path.clone());
+        self.active_segment = new_segment;
 
         info!(
             current_id,
             next_id,
             next_path = %next_path.to_string_lossy(),
             current_size = self.active_segment.current_size,
-            max_size = self.active_segment.max_size,
+            max_size = self.segment_max_size,
             "rotating wal segment"
         );
 
-        self.active_segment = Segment::try_new(next_path, Some(self.active_segment.max_size))?;
+        self.active_segment = Segment::try_new(next_id, next_path)?;
         // Push the previously held 'current' only once the new segment is opened
-        self.closed_segments.push(current_id);
+        self.closed_segments.push(last_id.0);
         Ok(())
     }
 
@@ -196,26 +197,31 @@ impl Wal {
     }
 }
 
+trait Log {
+    fn append();
+    fn read();
+}
+
+#[derive(Debug, Clone)]
+struct SegmentId(u64);
+
 #[derive(Debug)]
 struct Segment {
+    id: SegmentId,
     filepath: PathBuf,
     file: File,
     current_size: usize,
-    max_size: usize,
     buf: BytesMut,
 }
 
 impl Segment {
     /// Construct a new [`Segment`].
-    fn try_new(
-        segment_path: PathBuf,
-        segment_max_size: Option<usize>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    fn try_new(id: u64, segment_path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let buf = BytesMut::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize);
         Ok(Self {
+            id: SegmentId(id),
             filepath: segment_path.clone(),
             file: File::create_new(segment_path)?,
-            max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             current_size: 0,
             buf,
         })
@@ -235,6 +241,25 @@ impl Segment {
         }
 
         Ok(size)
+    }
+
+    fn id(&self) -> u64 {
+        self.id.0
+    }
+
+    /// Produce a new [`Segment`] and return the [`SegmentId`] of the current
+    /// segment.
+    fn next_segment(&self, segment_path: PathBuf) -> (SegmentId, Self) {
+        (
+            self.id.clone(),
+            Self {
+                id: SegmentId(self.id() + 1),
+                current_size: 0,
+                buf: BytesMut::with_capacity(MAX_SEGMENT_BUFFER_SIZE as usize),
+                filepath: segment_path.clone(),
+                file: File::create_new(segment_path).unwrap(),
+            },
+        )
     }
 
     /// Flush data for the [`Segment`] from the internal buffer to the underlying
@@ -464,5 +489,39 @@ mod test {
 
         let wal = Wal::try_new(10, dir.path().to_path_buf(), None).unwrap();
         assert_eq!(wal.closed_segments().len(), 10); // 0-base index, 0..=9 is 10 closed segments
+    }
+
+    #[test]
+    fn next_segment() {
+        let dir = TempDir::new().unwrap();
+
+        let segment_one_path = dir.path().join("1.log");
+        let mut segment_one_size = 0;
+
+        let mut s1 = Segment::try_new(1, segment_one_path.clone()).unwrap();
+        segment_one_size += s1.write(WalOperation::test_message(1)).unwrap();
+        segment_one_size += s1.write(WalOperation::test_message(2)).unwrap();
+        s1.flush().unwrap();
+
+        assert_eq!(
+            segment_one_size as u64,
+            std::fs::metadata(&segment_one_path).unwrap().len()
+        );
+
+        let segment_two_path = dir.path().join("2.log");
+        let mut segment_two_size = 0;
+        let (_, mut s2) = s1.next_segment(segment_two_path.clone());
+        segment_two_size += s2.write(WalOperation::test_message(3)).unwrap();
+        s2.flush().unwrap();
+
+        assert_eq!(
+            segment_one_size as u64,
+            std::fs::metadata(&segment_one_path).unwrap().len(),
+            "Previous segment should remain unchanged"
+        );
+        assert_eq!(
+            segment_two_size as u64,
+            std::fs::metadata(&segment_two_path).unwrap().len()
+        );
     }
 }

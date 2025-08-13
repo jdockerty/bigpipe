@@ -5,18 +5,15 @@ use std::{fs::File, io::Write, path::PathBuf};
 use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::HashMap;
 use prost::Message;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use walkdir::{DirEntry, WalkDir};
 
 use super::DEFAULT_MAX_SEGMENT_SIZE;
 use super::MAX_SEGMENT_BUFFER_SIZE;
 use super::WAL_DEFAULT_ID;
 use super::WAL_EXTENSION;
-use crate::data_types::wal_proto::segment_entry::Entry as EntryProto;
 use crate::data_types::wal_proto::SegmentEntry as SegmentEntryProto;
-use crate::data_types::{
-    namespace::Namespace, value::BigPipeValue, value::RetentionPolicy, wal::WalOperation,
-};
+use crate::data_types::{namespace::Namespace, value::BigPipeValue, wal::WalOperation};
 use crate::ServerMessage;
 
 /// A write-ahead log (WAL) implementation.
@@ -28,6 +25,7 @@ use crate::ServerMessage;
 pub struct Wal {
     id: u64,
     active_segment: Segment,
+    segment_max_size: usize,
     closed_segments: Vec<u64>,
     directory: PathBuf,
 }
@@ -47,7 +45,6 @@ impl Wal {
 
         Ok(Self {
             id,
-            message_offset_index: HashMap::new(),
             directory: directory.clone(),
             segment_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             active_segment: Segment::try_new(id, directory.join(format!("{id}{WAL_EXTENSION}")))?,
@@ -93,47 +90,29 @@ impl Wal {
 
                 let mut bytes = Bytes::from(buf);
                 match SegmentEntryProto::decode(&mut bytes) {
-                    Ok(entry) => match entry.entry.expect("segment entry is encoded") {
-                        EntryProto::MessageEntry(message_entry) => {
-                            messages
-                                .entry(Namespace::new(&message_entry.key))
-                                .and_modify(|occupied_messages: &mut BigPipeValue| {
-                                    let message_entry = message_entry.clone();
-                                    occupied_messages.push(ServerMessage::new(
-                                        message_entry.key,
-                                        message_entry.value.into(),
-                                        message_entry.timestamp,
-                                    ))
-                                })
-                                .or_insert_with(|| {
-                                    let mut messages = BigPipeValue::new();
-                                    messages.push(ServerMessage::new(
-                                        message_entry.key,
-                                        message_entry.value.into(),
-                                        message_entry.timestamp,
-                                    ));
-                                    messages
-                                });
-                        }
-                        EntryProto::NamespaceEntry(namespace) => {
-                            messages
-                                .entry(Namespace::new(&namespace.key))
-                                .and_modify(|v| {
-                                    v.set_retention_policy(
-                                        RetentionPolicy::try_from(namespace.retention_policy)
-                                            .unwrap(),
-                                    )
-                                })
-                                .or_insert_with(|| {
-                                    let mut value = BigPipeValue::new();
-                                    value.set_retention_policy(
-                                        RetentionPolicy::try_from(namespace.retention_policy)
-                                            .unwrap(),
-                                    );
-                                    value
-                                });
-                        }
-                    },
+                    Ok(entry) => {
+                        let message_entry = entry.message_entry.expect("message is encoded");
+                        // TODO: maps should be for offset id => physical offset in a segment now.
+                        messages
+                            .entry(Namespace::new(&message_entry.key))
+                            .and_modify(|occupied_messages: &mut BigPipeValue| {
+                                let message_entry = message_entry.clone();
+                                occupied_messages.push(ServerMessage::new(
+                                    message_entry.key,
+                                    message_entry.value.into(),
+                                    message_entry.timestamp,
+                                ))
+                            })
+                            .or_insert_with(|| {
+                                let mut messages = BigPipeValue::new();
+                                messages.push(ServerMessage::new(
+                                    message_entry.key,
+                                    message_entry.value.into(),
+                                    message_entry.timestamp,
+                                ));
+                                messages
+                            });
+                    }
                     Err(e) => {
                         error!(?e, "wal decoding error");
                         break;
@@ -195,11 +174,6 @@ impl Wal {
     pub fn closed_segments(&self) -> &[u64] {
         &self.closed_segments
     }
-}
-
-trait Log {
-    fn append();
-    fn read();
 }
 
 #[derive(Debug, Clone)]
@@ -320,8 +294,6 @@ fn parse_segment_id(entry: &DirEntry) -> u64 {
 mod test {
     use tempfile::TempDir;
 
-    use crate::data_types::{value::RetentionPolicy, wal::WalNamespaceEntry};
-
     use super::*;
 
     #[test]
@@ -438,41 +410,6 @@ mod test {
             .is_ok(),
             "Segment should be +1 from last"
         );
-    }
-
-    #[test]
-    fn namespace_creation_durable() {
-        let dir = TempDir::new().unwrap();
-
-        let mut wal = Wal::try_new(WAL_DEFAULT_ID, dir.path().to_path_buf(), None).unwrap();
-        let namespace = "my_new_namespace";
-
-        wal.write(WalOperation::Namespace(WalNamespaceEntry {
-            key: namespace.to_string(),
-            retention_policy: RetentionPolicy::Ttl, // using the non-default policy
-        }))
-        .unwrap();
-        wal.flush().unwrap();
-
-        drop(wal);
-
-        let (_, inner) = Wal::replay(dir.path()).unwrap();
-        assert_eq!(inner.keys().len(), 1);
-
-        let mut expected = BigPipeValue::new();
-        expected.set_retention_policy(RetentionPolicy::Ttl);
-
-        let got = inner.get(&Namespace::new(namespace)).unwrap().clone();
-        assert_eq!(got.is_empty(), expected.is_empty());
-        assert!(
-            got.get(0).is_none(),
-            "Namespace was only created, no values are expected"
-        );
-        assert_eq!(got.retention_policy(), expected.retention_policy());
-
-        // TODO: expand with deletion:
-        //  - adding entries shows those entries on replay
-        //  - removal yields no namespace at all
     }
 
     #[test]

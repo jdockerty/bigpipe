@@ -138,13 +138,6 @@ impl NamespaceWal {
                     .observe(start.elapsed().as_secs_f64());
                 Ok(())
             }
-            WalOperation::Namespace(namespace) => {
-                self.write_under_lock(&Namespace::new(&namespace.key), &op);
-                self.wal_write_duration
-                    .with_label_values(&["namespace"])
-                    .observe(start.elapsed().as_secs_f64());
-                Ok(())
-            }
         }
     }
 

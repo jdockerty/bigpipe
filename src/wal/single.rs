@@ -139,11 +139,16 @@ impl Wal {
     }
 
     /// Write a message into the write-ahead log.
-    pub fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
+    pub fn write(
+        &mut self,
+        op: WalOperation,
+    ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         if self.active_segment.current_size >= self.segment_max_size {
             self.rotate()?;
         }
-        self.active_segment.write(op)
+        let (sz, offset) = self.active_segment.write(op)?;
+        self.messages += 1;
+        Ok((sz, offset))
     }
 
     #[allow(dead_code)]
@@ -214,19 +219,18 @@ impl Segment {
     }
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
-    fn write(&mut self, op: WalOperation) -> Result<usize, Box<dyn std::error::Error>> {
-        let wal_operation = SegmentEntryProto::try_from(op)
-            .unwrap()
-            .encode_length_delimited_to_vec();
+    fn write(&mut self, op: WalOperation) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+        let wal_operation = SegmentEntryProto::try_from(op)?.encode_length_delimited_to_vec();
         let size = wal_operation.len();
 
+        self.current_size += size;
         self.buf.put_slice(&wal_operation);
 
         if self.buf.len() >= MAX_SEGMENT_BUFFER_SIZE as usize {
             self.flush()?;
         }
 
-        Ok(size)
+        Ok((size, self.current_size))
     }
 
     fn id(&self) -> u64 {
@@ -254,7 +258,6 @@ impl Segment {
         debug!("flushing internal segment buffer");
         self.file.write_all(&self.buf)?;
         self.file.sync_all()?;
-        self.current_size += self.buf.len();
         self.buf.clear();
         Ok(())
     }
@@ -432,8 +435,10 @@ mod test {
         let mut segment_one_size = 0;
 
         let mut s1 = Segment::try_new(1, segment_one_path.clone()).unwrap();
-        segment_one_size += s1.write(WalOperation::test_message(1)).unwrap();
-        segment_one_size += s1.write(WalOperation::test_message(2)).unwrap();
+        let (sz, _) = s1.write(WalOperation::test_message(1)).unwrap();
+        segment_one_size += sz;
+        let (sz, _) = s1.write(WalOperation::test_message(2)).unwrap();
+        segment_one_size += sz;
         s1.flush().unwrap();
 
         assert_eq!(
@@ -444,7 +449,8 @@ mod test {
         let segment_two_path = dir.path().join("2.log");
         let mut segment_two_size = 0;
         let (_, mut s2) = s1.next_segment(segment_two_path.clone());
-        segment_two_size += s2.write(WalOperation::test_message(3)).unwrap();
+        let (sz, _) = s2.write(WalOperation::test_message(3)).unwrap();
+        segment_two_size += sz;
         s2.flush().unwrap();
 
         assert_eq!(
@@ -455,6 +461,32 @@ mod test {
         assert_eq!(
             segment_two_size as u64,
             std::fs::metadata(&segment_two_path).unwrap().len()
+        );
+    }
+
+    #[test]
+    fn offset_tracking() {
+        let dir = TempDir::new().unwrap();
+
+        let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let (sz, offset) = w.write(WalOperation::test_message(0)).unwrap();
+        assert_eq!(
+            sz, offset,
+            "Offset and size of the write are equal for the first write"
+        );
+
+        let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let mut total_write_size = 0;
+        let mut expected_offset = 0;
+        for _ in 0..10 {
+            let (sz, offset) = w.write(WalOperation::test_message(0)).unwrap();
+            total_write_size += sz;
+            expected_offset = offset;
+        }
+
+        assert_eq!(
+            total_write_size, expected_offset,
+            "Offset is expected to be size of multiple writes"
         );
     }
 

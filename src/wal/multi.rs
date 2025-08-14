@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
 use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
@@ -10,7 +11,6 @@ use super::Wal;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
 use crate::data_types::namespace::Namespace;
 use crate::data_types::wal::WalOperation;
-use crate::wal::WAL_DEFAULT_ID;
 use crate::BigPipeValue;
 
 /// A write-ahead log implementation which will handle
@@ -110,32 +110,30 @@ impl NamespaceWal {
     /// the internal namespace lock.
     ///
     /// When a namespace does not exist, it is eagerly created.
-    fn write_under_lock(&self, namespace: &Namespace, op: &WalOperation) {
-        self.namespaces
-            .lock()
-            .entry(namespace.clone())
-            .and_modify(|wal| {
-                wal.write(op.clone()).unwrap();
-            })
-            .or_insert_with(|| {
+    fn write_under_lock(&self, namespace: &Namespace, op: &WalOperation) -> (usize, usize) {
+        match self.namespaces.lock().entry(namespace.clone()) {
+            Entry::Occupied(mut n) => n.get_mut().write(op.clone()).unwrap(),
+            Entry::Vacant(n) => {
                 let wal_dir = self.create_wal_directory(namespace);
                 let mut wal = Wal::try_new(wal_dir, Some(self.max_segment_size)).unwrap();
-                wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
-                wal
-            });
+                let (sz, offset) = wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
+                n.insert(wal);
+                (sz, offset)
+            }
+        }
     }
 
     /// Write a [`WalOperation`] to the respective [`Wal`]. The key within
     /// the operation is used as the namespace.
-    pub fn write(&self, op: WalOperation) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn write(&self, op: WalOperation) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         let start = Instant::now();
         match &op {
             WalOperation::Message(msg) => {
-                self.write_under_lock(&Namespace::new(&msg.key), &op);
+                let (sz, offset) = self.write_under_lock(&Namespace::new(&msg.key), &op);
                 self.wal_write_duration
                     .with_label_values(&["message"])
                     .observe(start.elapsed().as_secs_f64());
-                Ok(())
+                Ok((sz, offset))
             }
         }
     }

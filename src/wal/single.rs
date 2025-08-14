@@ -29,21 +29,20 @@ pub struct Wal {
     directory: PathBuf,
 }
 
-fn find_last_segment_id(path: impl AsRef<Path>) -> u64 {
-    let d = walkdir::WalkDir::new(&path)
+fn find_segment_ids(path: impl AsRef<Path>) -> Vec<u64> {
+    let dir = walkdir::WalkDir::new(&path)
         .max_depth(1)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().to_string_lossy().contains(WAL_EXTENSION));
 
-    let mut highest_segment_id = WAL_DEFAULT_ID;
-    for e in d {
-        let segment_id = parse_segment_id(&e);
-        if segment_id >= highest_segment_id {
-            highest_segment_id = segment_id;
-        }
-    }
-    highest_segment_id
+    let mut segment_ids: Vec<u64> = dir
+        .into_iter()
+        .map(|entry| parse_segment_id(&entry))
+        .collect();
+    segment_ids.sort();
+    println!("{segment_ids:?}");
+    segment_ids
 }
 
 impl Wal {
@@ -51,15 +50,14 @@ impl Wal {
         directory: PathBuf,
         segment_max_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let last_segment_id = find_last_segment_id(&directory);
-        // When non-zero segments are provided, a system invariant
-        // here assumes that the IDs are monotonically increasing.
-        //
-        // In other words, if '5' is given, segments 0..=4 MUST
-        // already exists.
-        let closed_segments = (0..last_segment_id).collect::<Vec<_>>();
+        let closed_segments = find_segment_ids(&directory);
 
-        let id = last_segment_id + 1;
+        // Segments are sorted, the last element is the largest current segment.
+        let id = closed_segments
+            .last()
+            .and_then(|s| Some(s + 1))
+            .unwrap_or(WAL_DEFAULT_ID);
+
         Ok(Self {
             directory: directory.clone(),
             segment_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
@@ -401,12 +399,9 @@ mod test {
         }
 
         assert!(
-            Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE),).is_err(),
-            "Creating segment with same ID is not allowed"
-        );
-
-        assert!(
-            Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE),).is_ok(),
+            Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE))
+                .ok()
+                .is_some_and(|w| w.active_segment.id() == 25),
             "Segment should be +1 from last"
         );
     }
@@ -425,7 +420,7 @@ mod test {
         assert_eq!(wal.closed_segments().len(), 10);
 
         let wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
-        assert_eq!(wal.closed_segments().len(), 10); // 0-base index, 0..=9 is 10 closed segments
+        assert_eq!(wal.closed_segments().len(), 11); // 0-base index, 0..=10 is 11 closed segments
         assert_eq!(wal.active_segment.id(), 11);
     }
 
@@ -476,6 +471,6 @@ mod test {
             })
             .collect();
 
-        assert_eq!(find_last_segment_id(dir.path()), 5);
+        assert_eq!(find_segment_ids(dir.path()), (1..=5).collect::<Vec<_>>());
     }
 }

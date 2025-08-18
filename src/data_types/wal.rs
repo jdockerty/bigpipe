@@ -1,7 +1,6 @@
 use bytes::Bytes;
 
 use super::value::RetentionPolicy;
-use wal::segment_entry;
 use wal::SegmentEntry as SegmentEntryProto;
 
 // HACK:
@@ -32,22 +31,11 @@ pub struct WalMessageEntry {
     pub timestamp: i64,
 }
 
-/// Definition of a namespace entry that resides in the WAL.
-///
-/// This is this crate's version of the protobuf equivalent.
-#[derive(Debug, Clone)]
-pub struct WalNamespaceEntry {
-    pub key: String,
-    pub retention_policy: RetentionPolicy,
-}
-
 /// An operation that can be enacted onto the WAL.
 #[derive(Debug, Clone)]
 pub enum WalOperation {
     /// Message ingest
     Message(WalMessageEntry),
-    /// Namespace creation
-    Namespace(WalNamespaceEntry),
 }
 
 impl WalOperation {
@@ -68,10 +56,6 @@ impl WalOperation {
                 value: msg.value,
                 timestamp: msg.timestamp,
             }),
-            WalOperation::Namespace(namespace) => WalOperation::Namespace(WalNamespaceEntry {
-                key: namespace.key,
-                retention_policy: namespace.retention_policy,
-            }),
         }
     }
 }
@@ -79,25 +63,12 @@ impl WalOperation {
 impl TryFrom<SegmentEntryProto> for WalOperation {
     type Error = Box<dyn std::error::Error>;
     fn try_from(value: SegmentEntryProto) -> Result<Self, Self::Error> {
-        match value.entry {
-            Some(entry) => match entry {
-                segment_entry::Entry::MessageEntry(message) => {
-                    Ok(WalOperation::Message(WalMessageEntry {
-                        key: message.key,
-                        value: message.value.into(),
-                        timestamp: message.timestamp,
-                    }))
-                }
-                segment_entry::Entry::NamespaceEntry(namespace) => {
-                    Ok(WalOperation::Namespace(WalNamespaceEntry {
-                        key: namespace.key.clone(),
-                        retention_policy: RetentionPolicy::try_from(
-                            namespace.retention_policy() as i32
-                        )
-                        .unwrap(),
-                    }))
-                }
-            },
+        match value.message_entry {
+            Some(message) => Ok(WalOperation::Message(WalMessageEntry {
+                key: message.key,
+                value: message.value.into(),
+                timestamp: message.timestamp,
+            })),
             None => Err("unknown variant encoded".into()),
         }
     }
@@ -108,17 +79,11 @@ impl TryFrom<WalOperation> for SegmentEntryProto {
     fn try_from(value: WalOperation) -> Result<Self, Self::Error> {
         match value {
             WalOperation::Message(message) => Ok(SegmentEntryProto {
-                entry: Some(segment_entry::Entry::MessageEntry(wal::MessageEntry {
+                message_entry: Some(wal::MessageEntry {
                     key: message.key,
                     value: message.value.into(),
                     timestamp: message.timestamp,
-                })),
-            }),
-            WalOperation::Namespace(namespace) => Ok(SegmentEntryProto {
-                entry: Some(segment_entry::Entry::NamespaceEntry(wal::NamespaceEntry {
-                    key: namespace.key,
-                    retention_policy: namespace.retention_policy as i32,
-                })),
+                }),
             }),
         }
     }

@@ -163,16 +163,7 @@ impl Namespace for Arc<BigPipeServer> {
             retention_policy: _,
         } = request.into_inner();
 
-        match self.inner.lock().inner.entry(key.as_str().into()) {
-            hashbrown::hash_map::Entry::Occupied(_) => Err(Status::new(
-                Code::AlreadyExists,
-                format!("{key} already exists"),
-            )),
-            hashbrown::hash_map::Entry::Vacant(e) => {
-                e.insert(BigPipeValue::new());
-                Ok(Response::new(CreateNamespaceResponse { key }))
-            }
-        }
+        unimplemented!()
     }
 
     async fn update(
@@ -186,21 +177,7 @@ impl Namespace for Arc<BigPipeServer> {
 
         let retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
 
-        match self
-            .inner
-            .lock()
-            .inner
-            .get_key_value_mut(&InternalNamespace::new(&key))
-        {
-            Some((_, value)) => {
-                value.set_retention_policy(retention_policy);
-                Ok(Response::new(UpdateNamespaceResponse { key }))
-            }
-            None => Err(Status::new(
-                Code::NotFound,
-                format!("cannot update non-existent namespace '{key}'"),
-            )),
-        }
+        unimplemented!()
     }
 }
 

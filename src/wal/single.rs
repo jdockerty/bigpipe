@@ -1,10 +1,13 @@
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs::File, io::Write, path::PathBuf};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::HashMap;
+use prometheus::core::AtomicI64;
 use prost::Message;
+use tonic::IntoRequest;
 use tracing::{debug, error, info, warn};
 use walkdir::{DirEntry, WalkDir};
 
@@ -12,9 +15,27 @@ use super::DEFAULT_MAX_SEGMENT_SIZE;
 use super::MAX_SEGMENT_BUFFER_SIZE;
 use super::WAL_DEFAULT_ID;
 use super::WAL_EXTENSION;
-use crate::data_types::wal_proto::SegmentEntry as SegmentEntryProto;
+use crate::data_types::wal::WalMessageEntry;
+use crate::data_types::wal_proto::{MessageEntry, SegmentEntry as SegmentEntryProto};
 use crate::data_types::{namespace::Namespace, value::BigPipeValue, wal::WalOperation};
 use crate::ServerMessage;
+
+#[derive(Debug)]
+struct OffsetId(AtomicU64);
+
+impl OffsetId {
+    pub fn new(inner: u64) -> Self {
+        OffsetId(AtomicU64::new(inner))
+    }
+
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
+    }
+
+    pub fn next(&self) -> Self {
+        OffsetId((self.0.load(Ordering::Acquire) + 1).into())
+    }
+}
 
 /// A write-ahead log (WAL) implementation.
 ///
@@ -24,6 +45,8 @@ use crate::ServerMessage;
 #[derive(Debug)]
 pub struct Wal {
     active_segment: Segment,
+    current_offset: OffsetId,
+    offset_index: HashMap<u64, (SegmentId, usize)>,
     segment_max_size: usize,
     closed_segments: Vec<u64>,
     directory: PathBuf,
@@ -59,6 +82,8 @@ impl Wal {
             .unwrap_or(WAL_DEFAULT_ID);
 
         Ok(Self {
+            current_offset: OffsetId::new(0),
+            offset_index: HashMap::new(),
             directory: directory.clone(),
             segment_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             active_segment: Segment::try_new(id, directory.join(format!("{id}{WAL_EXTENSION}")))?,
@@ -66,89 +91,64 @@ impl Wal {
         })
     }
 
-    /// Replay an individual [`Wal`], returning the inner data representation.
-    /// This requires reading ALL segments that are available.
-    pub fn replay<P: AsRef<Path>>(directory: P) -> Option<(u64, HashMap<Namespace, BigPipeValue>)> {
-        let mut highest_segment_id: u64 = WAL_DEFAULT_ID;
-        let mut segment_paths = Vec::new();
-
-        for entry in WalkDir::new(directory)
-            .max_depth(1) // current directory only
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().to_string_lossy().contains(WAL_EXTENSION))
-        {
-            let segment_id = parse_segment_id(&entry);
-            if segment_id >= highest_segment_id {
-                highest_segment_id = segment_id;
-            }
-            segment_paths.push((segment_id, entry.path().to_path_buf()));
-        }
-
-        if segment_paths.is_empty() {
-            return None;
-        }
-
-        // Ensure that the paths are replayed in the order they were
-        // written.
-        segment_paths.sort_by_key(|(id, _)| *id);
-
-        let mut messages = HashMap::with_capacity(1000);
-        for (_, path) in segment_paths {
-            let segment = std::fs::File::open(&path).unwrap();
-            let mut reader = BufReader::new(segment);
-
-            while let Some(len) = read_varint(&mut reader).unwrap() {
-                let mut buf = vec![0u8; len];
-                reader.read_exact(&mut buf).unwrap();
-
-                let mut bytes = Bytes::from(buf);
-                match SegmentEntryProto::decode(&mut bytes) {
-                    Ok(entry) => {
-                        let message_entry = entry.message_entry.expect("message is encoded");
-                        // TODO: maps should be for offset id => physical offset in a segment now.
-                        messages
-                            .entry(Namespace::new(&message_entry.key))
-                            .and_modify(|occupied_messages: &mut BigPipeValue| {
-                                let message_entry = message_entry.clone();
-                                occupied_messages.push(ServerMessage::new(
-                                    message_entry.key,
-                                    message_entry.value.into(),
-                                    message_entry.timestamp,
-                                ))
-                            })
-                            .or_insert_with(|| {
-                                let mut messages = BigPipeValue::new();
-                                messages.push(ServerMessage::new(
-                                    message_entry.key,
-                                    message_entry.value.into(),
-                                    message_entry.timestamp,
-                                ));
-                                messages
-                            });
-                    }
-                    Err(e) => {
-                        error!(?e, "wal decoding error");
-                        break;
-                    }
-                }
-            }
-        }
-
-        Some((highest_segment_id, messages))
-    }
-
     /// Write a message into the write-ahead log.
     pub fn write(
         &mut self,
-        op: WalOperation,
+        op: WalMessageEntry,
     ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         if self.active_segment.current_size >= self.segment_max_size {
             self.rotate()?;
         }
         let (sz, offset) = self.active_segment.write(op)?;
-        self.messages += 1;
+        self.offset_index.insert(
+            self.current_offset.get(),
+            (self.active_segment.id.clone(), offset),
+        );
+        self.current_offset = self.current_offset.next();
         Ok((sz, offset))
+    }
+
+    pub fn read(&self, offset: u64) -> io::Result<Option<Vec<ServerMessage>>> {
+        let (segment_id, byte_offset) = match self.offset_index.get(&offset) {
+            Some(x) => x,
+            None => return Ok(None),
+        };
+
+        let file = std::fs::File::open(
+            self.directory
+                .join(format!("{}{WAL_EXTENSION}", segment_id.0)),
+        )?;
+        let mut reader = BufReader::new(file);
+        reader.seek(SeekFrom::Start(*byte_offset as u64))?;
+
+        let mut out = Vec::new();
+        loop {
+            // Read the fixed-size length header
+            let mut len_buf = [0u8; 8];
+            match reader.read_exact(&mut len_buf) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break, // clean tail
+                Err(e) => return Err(e),
+            }
+
+            let len = u64::from_le_bytes(len_buf);
+            println!("{len}");
+
+            // Read the message bytes
+            let mut bytes = vec![0u8; len as usize];
+            reader.read_exact(&mut bytes)?;
+
+            // Decode
+            // If using `prost::Message` for `MessageEntry`:
+            // let msg = MessageEntry::decode(bytes.as_slice())
+            //     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let mut bm = bytes::BytesMut::from(&bytes[..]); // if your decode needs BytesMut
+            let msg = MessageEntry::decode(&mut bm) // map error as above
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+            out.push(ServerMessage::new(msg.key, msg.value.into(), msg.timestamp));
+        }
+        Ok(Some(out))
     }
 
     #[allow(dead_code)]
@@ -219,8 +219,16 @@ impl Segment {
     }
 
     /// Perform a write into the [`Segment`], returning the number of bytes written.
-    fn write(&mut self, op: WalOperation) -> Result<(usize, usize), Box<dyn std::error::Error>> {
-        let wal_operation = SegmentEntryProto::try_from(op)?.encode_length_delimited_to_vec();
+    fn write(
+        &mut self,
+        msg: WalMessageEntry,
+    ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+        let wal_operation = MessageEntry {
+            key: msg.key,
+            value: msg.value.into(),
+            timestamp: msg.timestamp,
+        }
+        .encode_length_delimited_to_vec();
         let size = wal_operation.len();
 
         self.current_size += size;
@@ -335,7 +343,7 @@ mod test {
 
         let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
 
-        wal.write(WalOperation::test_message(0)).unwrap();
+        wal.write(WalMessageEntry::test_message(0)).unwrap();
         wal.flush().unwrap();
 
         assert!(wal.active_segment_path().exists());
@@ -356,7 +364,7 @@ mod test {
         let server_msg_size = 17;
 
         for _ in 0..=2 {
-            wal.write(WalOperation::test_message(0)).unwrap();
+            wal.write(WalMessageEntry::test_message(0)).unwrap();
             wal.flush().unwrap();
         }
 
@@ -378,36 +386,36 @@ mod test {
         )
     }
 
-    #[test]
-    fn replay() {
-        let dir = TempDir::new().unwrap();
+    // #[test]
+    // fn replay() {
+    //     let dir = TempDir::new().unwrap();
 
-        const TINY_SEGMENT_SIZE: usize = 64;
-        let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
+    //     const TINY_SEGMENT_SIZE: usize = 64;
+    //     let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
 
-        for i in 0..100 {
-            wal.write(WalOperation::test_message(i)).unwrap();
-            wal.active_segment.flush().unwrap();
-        }
-        wal.flush().unwrap();
+    //     for i in 0..100 {
+    //         wal.write(WalMessageEntry::test_message(i)).unwrap();
+    //         wal.active_segment.flush().unwrap();
+    //     }
+    //     wal.flush().unwrap();
 
-        let (last_segment_id, messages) = Wal::replay(dir.path()).unwrap();
-        assert_eq!(last_segment_id, 24);
-        assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
+    //     let (last_segment_id, messages) = Wal::replay(dir.path()).unwrap();
+    //     assert_eq!(last_segment_id, 24);
+    //     assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
 
-        let contained_messages = messages.get(&Namespace::new("hello")).unwrap().clone();
-        assert_eq!(contained_messages.len(), 100);
-        for (i, msg) in contained_messages.into_iter().enumerate().take(100) {
-            assert_eq!(msg, ServerMessage::test_message(i as i64));
-        }
+    //     let contained_messages = messages.get(&Namespace::new("hello")).unwrap().clone();
+    //     assert_eq!(contained_messages.len(), 100);
+    //     for (i, msg) in contained_messages.into_iter().enumerate().take(100) {
+    //         assert_eq!(msg, ServerMessage::test_message(i as i64));
+    //     }
 
-        assert!(
-            Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE))
-                .ok()
-                .is_some_and(|w| w.active_segment.id() == 25),
-            "Segment should be +1 from last"
-        );
-    }
+    //     assert!(
+    //         Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE))
+    //             .ok()
+    //             .is_some_and(|w| w.active_segment.id() == 25),
+    //         "Segment should be +1 from last"
+    //     );
+    // }
 
     #[test]
     fn closed_segments() {
@@ -416,7 +424,7 @@ mod test {
         let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(64)).unwrap();
 
         for i in 0..10 {
-            wal.write(WalOperation::test_message(i)).unwrap();
+            wal.write(WalMessageEntry::test_message(i)).unwrap();
             wal.flush().unwrap();
             wal.rotate().unwrap();
         }
@@ -435,9 +443,9 @@ mod test {
         let mut segment_one_size = 0;
 
         let mut s1 = Segment::try_new(1, segment_one_path.clone()).unwrap();
-        let (sz, _) = s1.write(WalOperation::test_message(1)).unwrap();
+        let (sz, _) = s1.write(WalMessageEntry::test_message(1)).unwrap();
         segment_one_size += sz;
-        let (sz, _) = s1.write(WalOperation::test_message(2)).unwrap();
+        let (sz, _) = s1.write(WalMessageEntry::test_message(2)).unwrap();
         segment_one_size += sz;
         s1.flush().unwrap();
 
@@ -449,7 +457,7 @@ mod test {
         let segment_two_path = dir.path().join("2.log");
         let mut segment_two_size = 0;
         let (_, mut s2) = s1.next_segment(segment_two_path.clone());
-        let (sz, _) = s2.write(WalOperation::test_message(3)).unwrap();
+        let (sz, _) = s2.write(WalMessageEntry::test_message(3)).unwrap();
         segment_two_size += sz;
         s2.flush().unwrap();
 
@@ -469,7 +477,7 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
-        let (sz, offset) = w.write(WalOperation::test_message(0)).unwrap();
+        let (sz, offset) = w.write(WalMessageEntry::test_message(0)).unwrap();
         assert_eq!(
             sz, offset,
             "Offset and size of the write are equal for the first write"
@@ -479,7 +487,7 @@ mod test {
         let mut total_write_size = 0;
         let mut expected_offset = 0;
         for _ in 0..10 {
-            let (sz, offset) = w.write(WalOperation::test_message(0)).unwrap();
+            let (sz, offset) = w.write(WalMessageEntry::test_message(0)).unwrap();
             total_write_size += sz;
             expected_offset = offset;
         }
@@ -504,5 +512,23 @@ mod test {
             .collect();
 
         assert_eq!(find_segment_ids(dir.path()), (1..=5).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn read_from_log() {
+        let dir = TempDir::new().unwrap();
+
+        let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+
+        for i in 1..=10 {
+            w.write(WalMessageEntry::test_message(i)).unwrap();
+        }
+        w.flush().unwrap();
+        println!("{:?}", w.offset_index);
+
+        assert_eq!(w.offset_index.len(), 10);
+
+        let messages = w.read(1).unwrap().unwrap();
+        assert_eq!(messages.len(), 100);
     }
 }

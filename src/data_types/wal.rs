@@ -1,6 +1,7 @@
 use bytes::Bytes;
 
 use super::value::RetentionPolicy;
+use wal::MessageEntry as MessageEntryProto;
 use wal::SegmentEntry as SegmentEntryProto;
 
 // HACK:
@@ -31,6 +32,17 @@ pub struct WalMessageEntry {
     pub timestamp: i64,
 }
 
+impl WalMessageEntry {
+    #[cfg(test)]
+    pub fn test_message(timestamp: i64) -> Self {
+        Self {
+            key: "hello".to_string(),
+            value: "world".into(),
+            timestamp,
+        }
+    }
+}
+
 /// An operation that can be enacted onto the WAL.
 #[derive(Debug, Clone)]
 pub enum WalOperation {
@@ -57,6 +69,17 @@ impl WalOperation {
                 timestamp: msg.timestamp,
             }),
         }
+    }
+}
+
+impl TryFrom<MessageEntryProto> for WalMessageEntry {
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(value: MessageEntryProto) -> Result<Self, Self::Error> {
+        Ok(WalMessageEntry {
+            key: value.key,
+            value: value.value.into(),
+            timestamp: value.timestamp,
+        })
     }
 }
 

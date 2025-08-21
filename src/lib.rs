@@ -88,13 +88,11 @@ impl BigPipe {
 
     /// Write to the underlying WAL.
     pub fn wal_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: keep this as a WalOperation and allow callee to decide on inbound op?
-        self.wal
-            .write(data_types::wal::WalOperation::Message(WalMessageEntry {
-                key: message.key().to_string(),
-                value: message.value(),
-                timestamp: message.timestamp(),
-            }))?;
+        self.wal.write(WalMessageEntry {
+            key: message.key().to_string(),
+            value: message.value(),
+            timestamp: message.timestamp(),
+        })?;
         Ok(())
     }
 }

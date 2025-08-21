@@ -98,7 +98,7 @@ impl Wal {
         if self.active_segment.current_size >= self.segment_max_size {
             self.rotate()?;
         }
-        let (sz, offset) = self.active_segment.write(op)?;
+        let (sz, offset) = self.active_segment.write(op, self.current_offset.get())?;
         self.offset_index.insert(
             self.current_offset.get(),
             (self.active_segment.id.clone(), offset),
@@ -213,11 +213,13 @@ impl Segment {
     fn write(
         &mut self,
         msg: WalMessageEntry,
+        offset: u64,
     ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         let message = MessageEntry {
             key: msg.key,
             value: msg.value.into(),
             timestamp: msg.timestamp,
+            offset,
         };
         let message_bytes = message.encode_to_vec();
         let len = message_bytes.len();
@@ -319,7 +321,7 @@ mod test {
 
         let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
 
-        wal.write(WalMessageEntry::test_message(0)).unwrap();
+        wal.write(WalMessageEntry::test_message(0, 0)).unwrap();
         wal.flush().unwrap();
 
         assert!(wal.active_segment_path().exists());
@@ -339,8 +341,8 @@ mod test {
         // Known size of the write
         let server_msg_size = 17;
 
-        for _ in 0..=2 {
-            wal.write(WalMessageEntry::test_message(0)).unwrap();
+        for i in 0..=2 {
+            wal.write(WalMessageEntry::test_message(0, i)).unwrap();
             wal.flush().unwrap();
         }
 
@@ -400,7 +402,8 @@ mod test {
         let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(64)).unwrap();
 
         for i in 0..10 {
-            wal.write(WalMessageEntry::test_message(i)).unwrap();
+            wal.write(WalMessageEntry::test_message(i, i as u64))
+                .unwrap();
             wal.flush().unwrap();
             wal.rotate().unwrap();
         }
@@ -419,9 +422,9 @@ mod test {
         let mut segment_one_size = 0;
 
         let mut s1 = Segment::try_new(1, segment_one_path.clone()).unwrap();
-        let (sz, _) = s1.write(WalMessageEntry::test_message(1)).unwrap();
+        let (sz, _) = s1.write(WalMessageEntry::test_message(0, 0), 0).unwrap();
         segment_one_size += sz;
-        let (sz, _) = s1.write(WalMessageEntry::test_message(2)).unwrap();
+        let (sz, _) = s1.write(WalMessageEntry::test_message(1, 1), 1).unwrap();
         segment_one_size += sz;
         s1.flush().unwrap();
 
@@ -433,7 +436,7 @@ mod test {
         let segment_two_path = dir.path().join("2.log");
         let mut segment_two_size = 0;
         let (_, mut s2) = s1.next_segment(segment_two_path.clone());
-        let (sz, _) = s2.write(WalMessageEntry::test_message(3)).unwrap();
+        let (sz, _) = s2.write(WalMessageEntry::test_message(2, 2), 2).unwrap();
         segment_two_size += sz;
         s2.flush().unwrap();
 
@@ -453,7 +456,7 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
-        let (sz, offset) = w.write(WalMessageEntry::test_message(0)).unwrap();
+        let (sz, offset) = w.write(WalMessageEntry::test_message(0, 0)).unwrap();
         assert_eq!(
             sz, offset,
             "Offset and size of the write are equal for the first write"
@@ -462,8 +465,8 @@ mod test {
         let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
         let mut total_write_size = 0;
         let mut expected_offset = 0;
-        for _ in 0..10 {
-            let (sz, offset) = w.write(WalMessageEntry::test_message(0)).unwrap();
+        for i in 0..10 {
+            let (sz, offset) = w.write(WalMessageEntry::test_message(0, i)).unwrap();
             total_write_size += sz;
             expected_offset = offset;
         }
@@ -497,8 +500,9 @@ mod test {
         let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
 
         let messages = (1..=10)
-            .map(|i| WalMessageEntry::test_message(i))
+            .map(|i| WalMessageEntry::test_message(i, (i - 1) as u64))
             .collect::<Vec<_>>();
+
         for m in messages.clone() {
             w.write(m).unwrap();
             w.flush().unwrap();
@@ -511,6 +515,12 @@ mod test {
                 written.timestamp,
                 read.timestamp(),
                 "Timestamps should match exactly in order"
+            );
+            // Offsets are known to be timestamp - 1 on creation for this test.
+            let offset = written.timestamp - 1;
+            assert_eq!(
+                written.offset, offset as u64,
+                "Offsets should match exactly in order"
             );
         }
 

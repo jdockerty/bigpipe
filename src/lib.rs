@@ -92,6 +92,7 @@ impl BigPipe {
             key: message.key().to_string(),
             value: message.value(),
             timestamp: message.timestamp(),
+            offset: 0, // TODO: no hardcode
         })?;
         Ok(())
     }

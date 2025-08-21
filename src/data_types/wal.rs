@@ -30,15 +30,17 @@ pub struct WalMessageEntry {
     pub key: String,
     pub value: Bytes,
     pub timestamp: i64,
+    pub offset: u64,
 }
 
 impl WalMessageEntry {
     #[cfg(test)]
-    pub fn test_message(timestamp: i64) -> Self {
+    pub fn test_message(timestamp: i64, offset: u64) -> Self {
         Self {
             key: "hello".to_string(),
             value: "world".into(),
             timestamp,
+            offset,
         }
     }
 }
@@ -52,11 +54,12 @@ pub enum WalOperation {
 
 impl WalOperation {
     #[cfg(test)]
-    pub fn test_message(timestamp: i64) -> Self {
+    pub fn test_message(timestamp: i64, offset: u64) -> Self {
         WalOperation::Message(WalMessageEntry {
             key: "hello".to_string(),
             value: "world".into(),
             timestamp,
+            offset,
         })
     }
 
@@ -67,6 +70,7 @@ impl WalOperation {
                 key: key.to_string(),
                 value: msg.value,
                 timestamp: msg.timestamp,
+                offset: msg.offset,
             }),
         }
     }
@@ -79,6 +83,7 @@ impl TryFrom<MessageEntryProto> for WalMessageEntry {
             key: value.key,
             value: value.value.into(),
             timestamp: value.timestamp,
+            offset: value.offset,
         })
     }
 }
@@ -91,6 +96,7 @@ impl TryFrom<SegmentEntryProto> for WalOperation {
                 key: message.key,
                 value: message.value.into(),
                 timestamp: message.timestamp,
+                offset: message.offset,
             })),
             None => Err("unknown variant encoded".into()),
         }
@@ -106,6 +112,7 @@ impl TryFrom<WalOperation> for SegmentEntryProto {
                     key: message.key,
                     value: message.value.into(),
                     timestamp: message.timestamp,
+                    offset: message.offset,
                 }),
             }),
         }

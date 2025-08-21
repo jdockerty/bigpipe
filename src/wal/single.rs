@@ -64,7 +64,6 @@ fn find_segment_ids(path: impl AsRef<Path>) -> Vec<u64> {
         .map(|entry| parse_segment_id(&entry))
         .collect();
     segment_ids.sort();
-    println!("{segment_ids:?}");
     segment_ids
 }
 
@@ -123,27 +122,18 @@ impl Wal {
 
         let mut out = Vec::new();
         loop {
-            // Read the fixed-size length header
-            let mut len_buf = [0u8; 8];
-            match reader.read_exact(&mut len_buf) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break, // clean tail
-                Err(e) => return Err(e),
-            }
-
-            let len = u64::from_le_bytes(len_buf);
-            println!("{len}");
+            let mut sz = [0u8; 8]; // u64 len delimiter
+            match reader.read_exact(&mut sz) {
+                Ok(_) => {}
+                Err(_e) => break,
+            };
 
             // Read the message bytes
-            let mut bytes = vec![0u8; len as usize];
+            let mut bytes = vec![0u8; u64::from_le_bytes(sz) as usize];
             reader.read_exact(&mut bytes)?;
 
-            // Decode
-            // If using `prost::Message` for `MessageEntry`:
-            // let msg = MessageEntry::decode(bytes.as_slice())
-            //     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            let mut bm = bytes::BytesMut::from(&bytes[..]); // if your decode needs BytesMut
-            let msg = MessageEntry::decode(&mut bm) // map error as above
+            let mut bytes = bytes::BytesMut::from(&bytes[..]);
+            let msg = MessageEntry::decode(&mut bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
             out.push(ServerMessage::new(msg.key, msg.value.into(), msg.timestamp));
@@ -218,27 +208,37 @@ impl Segment {
         })
     }
 
-    /// Perform a write into the [`Segment`], returning the number of bytes written.
+    /// Perform a write into the [`Segment`], returning the number of bytes written
+    /// and the offset of the written message.
     fn write(
         &mut self,
         msg: WalMessageEntry,
     ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
-        let wal_operation = MessageEntry {
+        let message = MessageEntry {
             key: msg.key,
             value: msg.value.into(),
             timestamp: msg.timestamp,
-        }
-        .encode_length_delimited_to_vec();
-        let size = wal_operation.len();
+        };
+        let message_bytes = message.encode_to_vec();
+        let len = message_bytes.len();
 
+        // The byte offset is the end of the current
+        // file. This is BEFORE we write the incoming
+        // message.
+        let byte_offset = self.current_size;
+
+        self.buf.put_u64_le(len as u64);
+        self.buf.put_slice(&message_bytes);
+
+        // Size is 8 bytes (u64 len delimiter) + message byte len
+        let size = 8 + message_bytes.len();
         self.current_size += size;
-        self.buf.put_slice(&wal_operation);
 
         if self.buf.len() >= MAX_SEGMENT_BUFFER_SIZE as usize {
             self.flush()?;
         }
 
-        Ok((size, self.current_size))
+        Ok((size, byte_offset))
     }
 
     fn id(&self) -> u64 {
@@ -274,30 +274,6 @@ impl Segment {
     fn path(&self) -> &Path {
         &self.filepath
     }
-}
-
-// Adapted from <https://docs.rs/wyre/latest/src/wyre/lib.rs.html#53-70>
-fn read_varint<R: Read>(reader: &mut R) -> io::Result<Option<usize>> {
-    let mut buf = [0u8; 1];
-    let mut shift = 0;
-    let mut result: usize = 0;
-
-    for _ in 0..10 {
-        if reader.read(&mut buf)? == 0 {
-            return Ok(None); // EOF
-        }
-        let byte = buf[0];
-        result |= ((byte & 0x7F) as usize) << shift;
-        if byte & 0x80 == 0 {
-            return Ok(Some(result));
-        }
-        shift += 7;
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "varint too long",
-    ))
 }
 
 fn parse_segment_id(entry: &DirEntry) -> u64 {
@@ -520,15 +496,35 @@ mod test {
 
         let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
 
-        for i in 1..=10 {
-            w.write(WalMessageEntry::test_message(i)).unwrap();
+        let messages = (1..=10)
+            .map(|i| WalMessageEntry::test_message(i))
+            .collect::<Vec<_>>();
+        for m in messages.clone() {
+            w.write(m).unwrap();
+            w.flush().unwrap();
         }
-        w.flush().unwrap();
-        println!("{:?}", w.offset_index);
-
         assert_eq!(w.offset_index.len(), 10);
 
-        let messages = w.read(1).unwrap().unwrap();
-        assert_eq!(messages.len(), 100);
+        let messages_read = w.read(0).unwrap().expect("read some messages");
+        for (written, read) in std::iter::zip(messages.clone(), messages_read) {
+            assert_eq!(
+                written.timestamp,
+                read.timestamp(),
+                "Timestamps should match exactly in order"
+            );
+        }
+
+        assert!(
+            w.read(50).unwrap().is_none(),
+            "Reading a non-existent offset should result in None"
+        );
+        let messages_read = w.read(6).unwrap().expect("read some messages");
+        for (written, read) in std::iter::zip(&messages[6..10], messages_read) {
+            assert_eq!(
+                written.timestamp,
+                read.timestamp(),
+                "Timestamps should match exactly in order"
+            );
+        }
     }
 }

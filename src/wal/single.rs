@@ -98,13 +98,13 @@ impl Wal {
         if self.active_segment.current_size >= self.segment_max_size {
             self.rotate()?;
         }
-        let (sz, offset) = self.active_segment.write(op, self.current_offset.get())?;
+        let (sz, byte_offset) = self.active_segment.write(op, self.current_offset.get())?;
         self.offset_index.insert(
             self.current_offset.get(),
-            (self.active_segment.id.clone(), offset),
+            (self.active_segment.id.clone(), byte_offset),
         );
         self.current_offset = self.current_offset.next();
-        Ok((sz, offset))
+        Ok((sz, byte_offset))
     }
 
     pub fn read(&self, offset: u64) -> io::Result<Option<Vec<ServerMessage>>> {
@@ -209,7 +209,7 @@ impl Segment {
     }
 
     /// Perform a write into the [`Segment`], returning the number of bytes written
-    /// and the offset of the written message.
+    /// and the physical byte offset message.
     fn write(
         &mut self,
         msg: WalMessageEntry,
@@ -336,31 +336,31 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(24)).unwrap();
+        let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
 
-        // Known size of the write
-        let server_msg_size = 17;
-
+        let mut total = 0;
         for i in 0..=2 {
-            wal.write(WalMessageEntry::test_message(0, i)).unwrap();
+            let (sz, _) = wal.write(WalMessageEntry::test_message(0, i)).unwrap();
+            total += sz;
             wal.flush().unwrap();
         }
-
-        assert_eq!(wal.active_segment.id(), 1, "Expected rotation");
-
         assert_eq!(
             wal.active_segment.file.metadata().unwrap().len(),
-            server_msg_size,
-            "A single write should be in the new file"
+            total as u64,
         );
+        assert_eq!(wal.active_segment.id(), 0);
+
+        wal.rotate().unwrap();
+        assert_eq!(wal.active_segment.id(), 1, "Expected rotation");
+
+        assert_eq!(wal.active_segment.file.metadata().unwrap().len(), 0);
         assert_eq!(
             std::fs::File::open(dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}")))
                 .unwrap()
                 .metadata()
                 .unwrap()
                 .len(),
-            server_msg_size * 2,
-            "Two writes are expected to the old segment"
+            total as u64
         )
     }
 
@@ -456,25 +456,24 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
-        let (sz, offset) = w.write(WalMessageEntry::test_message(0, 0)).unwrap();
         assert_eq!(
-            sz, offset,
-            "Offset and size of the write are equal for the first write"
+            w.current_offset.get(),
+            0,
+            "Logical offset should start at 0"
+        );
+
+        w.write(WalMessageEntry::test_message(0, 0)).unwrap();
+        assert_eq!(
+            w.current_offset.get(),
+            1,
+            "Writing a message should increment the logical offset"
         );
 
         let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
-        let mut total_write_size = 0;
-        let mut expected_offset = 0;
-        for i in 0..10 {
-            let (sz, offset) = w.write(WalMessageEntry::test_message(0, i)).unwrap();
-            total_write_size += sz;
-            expected_offset = offset;
+        for i in 1..=10 {
+            w.write(WalMessageEntry::test_message(0, i)).unwrap();
         }
-
-        assert_eq!(
-            total_write_size, expected_offset,
-            "Offset is expected to be size of multiple writes"
-        );
+        assert_eq!(w.current_offset.get(), 10);
     }
 
     #[test]

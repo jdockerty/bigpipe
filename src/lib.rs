@@ -67,23 +67,18 @@ impl BigPipe {
 
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
-    pub fn get_messages(&self, namespace: &str) -> Option<BigPipeValue> {
-        unimplemented!()
-    }
-
-    /// Get a range of messages starting from the `offset`.
-    pub fn get_message_range(
-        &self,
-        partition_key: &str,
-        offset: u64,
-    ) -> Option<Vec<ServerMessage>> {
-        self.get_messages(partition_key)
-            .map(|messages| messages.get_range(offset))
+    pub fn get_messages(&self, namespace: &str, offset: u64) -> Option<Vec<ServerMessage>> {
+        self.wal.read(&Namespace::new(namespace), offset)
     }
 
     /// Get all messages.
-    pub fn messages(&self) -> HashMap<Namespace, BigPipeValue> {
-        unimplemented!()
+    pub fn messages(&self) -> HashMap<Namespace, Vec<ServerMessage>> {
+        let namespaces = self.wal.namespaces();
+        let mut messages = HashMap::with_capacity(namespaces.len());
+        for namespace in &namespaces {
+            messages.insert(namespace.clone(), self.wal.read(&namespace, 0).unwrap());
+        }
+        messages
     }
 
     /// Write to the underlying WAL.
@@ -107,7 +102,6 @@ mod tests {
 
     #[test]
     fn add_messages() {
-        todo!();
         let wal_dir = TempDir::new().unwrap();
         let metrics = Registry::new();
         let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap();
@@ -125,14 +119,23 @@ mod tests {
         );
 
         for msg in [msg_1.clone(), msg_2.clone()] {
-            // q.add_message(&msg);
+            q.write(&msg).unwrap();
         }
 
         let messages = q.messages();
         assert_eq!(messages.keys().len(), 2);
-        assert_eq!(*q.get_messages(msg_1.key()).unwrap().get(0).unwrap(), msg_1);
-        assert_eq!(*q.get_messages(msg_2.key()).unwrap().get(0).unwrap(), msg_2);
-        assert!(q.get_messages("key_doesnt_exist").is_none());
+        assert_eq!(
+            *q.get_messages(msg_1.key(), 0)
+                .expect("messages exist")
+                .first()
+                .expect("first message exists"),
+            msg_1
+        );
+        assert_eq!(
+            *q.get_messages(msg_2.key(), 0).unwrap().get(0).unwrap(),
+            msg_2
+        );
+        assert!(q.get_messages("key_doesnt_exist", 0).is_none());
     }
 
     #[test]
@@ -148,7 +151,7 @@ mod tests {
         let metrics = Registry::new(); // use new registry, we cannot re-register metrics.
         let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
 
-        let messages = bigpipe.get_messages("hello").unwrap();
+        let messages = bigpipe.get_messages("hello", 0).unwrap();
         assert_eq!(messages.len(), 1);
         let message = messages.get(0);
         assert_eq!(
@@ -171,7 +174,7 @@ mod tests {
         assert_eq!(bigpipe.received_messages.get(), 100);
 
         assert_eq!(
-            bigpipe.get_message_range("hello", 10).unwrap(),
+            bigpipe.get_messages("hello", 10).unwrap(),
             (10..100)
                 .map(ServerMessage::test_message)
                 .collect::<Vec<_>>()

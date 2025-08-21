@@ -9,6 +9,7 @@ use walkdir::WalkDir;
 
 use super::Wal;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
+use crate::data_types::message::ServerMessage;
 use crate::data_types::namespace::Namespace;
 use crate::data_types::wal::WalMessageEntry;
 use crate::data_types::wal::WalOperation;
@@ -83,6 +84,14 @@ impl NamespaceWal {
         }
     }
 
+    pub fn namespaces(&self) -> Vec<Namespace> {
+        self.namespaces.lock().keys().cloned().collect()
+    }
+
+    pub fn namespace_count(&self) -> u64 {
+        self.total_namespaces.get()
+    }
+
     /// Create the WAL directory structure that will be used for the underlying
     /// [`Wal`] for a particular key, returning the associated [`PathBuf`].
     fn create_wal_directory(&self, namespace: &Namespace) -> PathBuf {
@@ -133,6 +142,14 @@ impl NamespaceWal {
             .with_label_values(&["message"])
             .observe(start.elapsed().as_secs_f64());
         Ok((sz, offset))
+    }
+
+    pub fn read(&self, namespace: &Namespace, offset: u64) -> Option<Vec<ServerMessage>> {
+        let mut guard = self.namespaces.lock();
+        match guard.entry(namespace.clone()) {
+            Entry::Occupied(n) => n.get().read(offset).unwrap(),
+            Entry::Vacant(_) => None,
+        }
     }
 
     // Replay all [`Wal`] files that are found from the given directory.

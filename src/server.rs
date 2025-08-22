@@ -163,7 +163,16 @@ impl Namespace for Arc<BigPipeServer> {
             retention_policy: _,
         } = request.into_inner();
 
-        unimplemented!()
+        if self
+            .inner
+            .lock()
+            .create_namespace(InternalNamespace::new(&key))
+            .is_none()
+        {
+            return Err(Status::not_found(""));
+        }
+
+        Ok(Response::new(CreateNamespaceResponse { key }))
     }
 
     async fn update(

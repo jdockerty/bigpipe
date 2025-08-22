@@ -92,6 +92,13 @@ impl BigPipe {
         })?;
         Ok(())
     }
+
+    pub fn create_namespace(&mut self, namespace: Namespace) -> Option<Namespace> {
+        match self.wal.create_namespace(&namespace) {
+            Some(_) => Some(namespace),
+            None => None,
+        }
+    }
 }
 
 #[cfg(test)]

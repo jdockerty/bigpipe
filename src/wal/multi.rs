@@ -97,8 +97,16 @@ impl NamespaceWal {
     fn create_wal_directory(&self, namespace: &Namespace) -> PathBuf {
         let wal_dir = PathBuf::from(format!("{}/{namespace}", self.root_directory.display()));
         std::fs::create_dir(&wal_dir).unwrap();
-        self.total_namespaces.inc();
         wal_dir
+    }
+
+    pub fn create_namespace(&self, namespace: &Namespace) -> Option<PathBuf> {
+        if self.namespaces.lock().get(namespace).is_some() {
+            return None;
+        }
+        let dir = self.create_wal_directory(&namespace);
+        self.total_namespaces.inc();
+        Some(dir)
     }
 
     #[allow(dead_code)]

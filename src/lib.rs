@@ -61,6 +61,7 @@ impl BigPipe {
     /// Write a message.
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
         self.wal_write(message)?;
+        self.wal.flush(&Namespace::new(message.key()))?;
         self.received_messages.inc();
         Ok(())
     }

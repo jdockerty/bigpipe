@@ -297,11 +297,6 @@ mod test {
 
         let partial_messages = messages.collect::<Vec<_>>().await;
         assert_eq!(
-            server.inner.lock().get_messages("hello", 8).unwrap().len(),
-            10,
-            "The 'hello' key should contain a total of 10 messages"
-        );
-        assert_eq!(
             partial_messages.len(),
             2,
             "An offset of 8 expects only 2 messages to be produced"

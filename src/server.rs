@@ -163,7 +163,16 @@ impl Namespace for Arc<BigPipeServer> {
             retention_policy: _,
         } = request.into_inner();
 
-        unimplemented!()
+        let namespace = InternalNamespace::new(&key);
+        let mut inner = self.inner.lock();
+
+        if inner.wal.contains_namespace(&namespace) {
+            return Err(Status::already_exists(format!("{key} already exists")));
+        }
+
+        inner.create_namespace(namespace);
+
+        Ok(Response::new(CreateNamespaceResponse { key }))
     }
 
     async fn update(

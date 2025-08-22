@@ -92,6 +92,14 @@ impl BigPipe {
         })?;
         Ok(())
     }
+
+    pub fn contains_namespace(&self, namespace: &Namespace) -> bool {
+        self.wal.contains_namespace(namespace)
+    }
+
+    pub fn create_namespace(&mut self, namespace: Namespace) {
+        self.wal.create_namespace(&namespace);
+    }
 }
 
 #[cfg(test)]

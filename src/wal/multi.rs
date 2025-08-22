@@ -97,8 +97,27 @@ impl NamespaceWal {
     fn create_wal_directory(&self, namespace: &Namespace) -> PathBuf {
         let wal_dir = PathBuf::from(format!("{}/{namespace}", self.root_directory.display()));
         std::fs::create_dir(&wal_dir).unwrap();
-        self.total_namespaces.inc();
         wal_dir
+    }
+
+    /// Check whether a namespace already exists.
+    ///
+    /// A namespace existing means that the directory structure and
+    /// MAYBE some logs exist for it.
+    pub fn contains_namespace(&self, namespace: &Namespace) -> bool {
+        self.namespaces.lock().contains_key(namespace)
+    }
+
+    /// Create a new namespace.
+    pub fn create_namespace(&self, namespace: &Namespace) {
+        self.namespaces
+            .lock()
+            .entry(namespace.clone())
+            .or_insert_with(|| {
+                let dir = self.create_wal_directory(&namespace);
+                self.total_namespaces.inc();
+                Wal::try_new(dir.clone(), Some(self.max_segment_size)).unwrap()
+            });
     }
 
     #[allow(dead_code)]

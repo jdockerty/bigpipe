@@ -138,7 +138,7 @@ mod tests {
             msg_1
         );
         assert_eq!(
-            *q.get_messages(msg_2.key(), 0).unwrap().get(0).unwrap(),
+            *q.get_messages(msg_2.key(), 0).unwrap().first().unwrap(),
             msg_2
         );
         assert!(q.get_messages("key_doesnt_exist", 0).is_none());

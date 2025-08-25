@@ -241,7 +241,7 @@ mod test {
             messages
                 .get(&Namespace::new("hello"))
                 .unwrap()
-                .get(0)
+                .first()
                 .unwrap(),
             ServerMessage { .. }
         );

@@ -34,13 +34,14 @@ impl OffsetId {
     }
 }
 
-/// A write-ahead log (WAL) implementation.
+/// A write-ahead log (WAL) implementation for a single
+/// namespace, a scoped log.
 ///
 /// The WAL is used to write bigpipe operations
 /// into an append-only file for durability, before
 /// becoming available to consumers.
 #[derive(Debug)]
-pub struct Wal {
+pub struct ScopedLog {
     active_segment: Segment,
     current_offset: OffsetId,
     offset_index: HashMap<u64, (SegmentId, usize)>,
@@ -64,7 +65,7 @@ fn find_segment_ids(path: impl AsRef<Path>) -> Vec<u64> {
     segment_ids
 }
 
-impl Wal {
+impl ScopedLog {
     pub fn try_new(
         directory: PathBuf,
         segment_max_size: Option<usize>,
@@ -299,7 +300,7 @@ mod test {
     fn path_semantics() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
 
         let expected_path = dir.path().join(format!("{WAL_DEFAULT_ID}{WAL_EXTENSION}"));
         assert!(expected_path.exists());
@@ -317,7 +318,7 @@ mod test {
     fn write() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
 
         wal.write(WalMessageEntry::test_message(0, 0)).unwrap();
         wal.flush().unwrap();
@@ -334,7 +335,7 @@ mod test {
     fn write_with_rotation() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
 
         let mut total = 0;
         for i in 0..=2 {
@@ -367,7 +368,7 @@ mod test {
     //     let dir = TempDir::new().unwrap();
 
     //     const TINY_SEGMENT_SIZE: usize = 64;
-    //     let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
+    //     let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
 
     //     for i in 0..100 {
     //         wal.write(WalMessageEntry::test_message(i)).unwrap();
@@ -386,7 +387,7 @@ mod test {
     //     }
 
     //     assert!(
-    //         Wal::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE))
+    //         ScopedLog::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE))
     //             .ok()
     //             .is_some_and(|w| w.active_segment.id() == 25),
     //         "Segment should be +1 from last"
@@ -397,7 +398,7 @@ mod test {
     fn closed_segments() {
         let dir = TempDir::new().unwrap();
 
-        let mut wal = Wal::try_new(dir.path().to_path_buf(), Some(64)).unwrap();
+        let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), Some(64)).unwrap();
 
         for i in 0..10 {
             wal.write(WalMessageEntry::test_message(i, i as u64))
@@ -407,7 +408,7 @@ mod test {
         }
         assert_eq!(wal.closed_segments().len(), 10);
 
-        let wal = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let wal = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
         assert_eq!(wal.closed_segments().len(), 11); // 0-base index, 0..=10 is 11 closed segments
         assert_eq!(wal.active_segment.id(), 11);
     }
@@ -453,7 +454,7 @@ mod test {
     fn offset_tracking() {
         let dir = TempDir::new().unwrap();
 
-        let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let mut w = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
         assert_eq!(
             w.current_offset.get(),
             0,
@@ -467,7 +468,7 @@ mod test {
             "Writing a message should increment the logical offset"
         );
 
-        let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let mut w = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
         for i in 1..=10 {
             w.write(WalMessageEntry::test_message(0, i)).unwrap();
         }
@@ -494,7 +495,7 @@ mod test {
     fn read_from_log() {
         let dir = TempDir::new().unwrap();
 
-        let mut w = Wal::try_new(dir.path().to_path_buf(), None).unwrap();
+        let mut w = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
 
         let messages = (1..=10)
             .map(|i| WalMessageEntry::test_message(i, (i - 1) as u64))

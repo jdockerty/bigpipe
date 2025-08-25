@@ -1,8 +1,8 @@
 pub mod client;
 pub mod data_types;
+mod log;
 mod metrics;
 pub mod server;
-mod wal;
 
 pub use metrics::run_metrics_task;
 
@@ -12,7 +12,7 @@ use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 
 use data_types::{message::ServerMessage, namespace::Namespace, wal::WalMessageEntry};
-use wal::NamespaceWal;
+use log::MultiLog;
 
 #[derive(Debug)]
 pub struct BigPipe {
@@ -20,7 +20,7 @@ pub struct BigPipe {
     ///
     /// This is composed of multiple WALs, partitioned by
     /// [`Namespace`] to isolate data.
-    wal: NamespaceWal,
+    log: MultiLog,
 
     /// Total number of messages received throughout the process
     /// lifetime.
@@ -48,17 +48,17 @@ impl BigPipe {
             .register(Box::new(received_messages.clone()))
             .unwrap();
 
-        let wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
+        let log = MultiLog::new(wal_directory, wal_max_segment_size, metrics);
         Ok(Self {
-            wal,
+            log,
             received_messages,
         })
     }
 
     /// Write a message.
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.wal_write(message)?;
-        self.wal.flush(&Namespace::new(message.key()))?;
+        self.log_write(message)?;
+        self.log.flush(&Namespace::new(message.key()))?;
         self.received_messages.inc();
         Ok(())
     }
@@ -66,22 +66,22 @@ impl BigPipe {
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
     pub fn get_messages(&self, namespace: &str, offset: u64) -> Option<Vec<ServerMessage>> {
-        self.wal.read(&Namespace::new(namespace), offset)
+        self.log.read(&Namespace::new(namespace), offset)
     }
 
     /// Get all messages.
     pub fn messages(&self) -> HashMap<Namespace, Vec<ServerMessage>> {
-        let namespaces = self.wal.namespaces();
+        let namespaces = self.log.namespaces();
         let mut messages = HashMap::with_capacity(namespaces.len());
         for namespace in &namespaces {
-            messages.insert(namespace.clone(), self.wal.read(namespace, 0).unwrap());
+            messages.insert(namespace.clone(), self.log.read(namespace, 0).unwrap());
         }
         messages
     }
 
     /// Write to the underlying WAL.
-    pub fn wal_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.wal.write(WalMessageEntry {
+    pub fn log_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+        self.log.write(WalMessageEntry {
             key: message.key().to_string(),
             value: message.value(),
             timestamp: message.timestamp(),
@@ -91,11 +91,11 @@ impl BigPipe {
     }
 
     pub fn contains_namespace(&self, namespace: &Namespace) -> bool {
-        self.wal.contains_namespace(namespace)
+        self.log.contains_namespace(namespace)
     }
 
     pub fn create_namespace(&mut self, namespace: Namespace) {
-        self.wal.create_namespace(&namespace);
+        self.log.create_namespace(&namespace);
     }
 }
 
@@ -177,7 +177,7 @@ mod tests {
         for i in 0..100 {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();
         }
-        bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
+        bigpipe.log.flush(&Namespace::new("hello")).unwrap();
         assert_eq!(bigpipe.received_messages.get(), 100);
 
         assert_eq!(

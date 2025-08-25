@@ -166,7 +166,7 @@ impl Namespace for Arc<BigPipeServer> {
         let namespace = InternalNamespace::new(&key);
         let mut inner = self.inner.lock();
 
-        if inner.wal.contains_namespace(&namespace) {
+        if inner.log.contains_namespace(&namespace) {
             return Err(Status::already_exists(format!("{key} already exists")));
         }
 
@@ -268,7 +268,7 @@ mod test {
         server
             .inner
             .lock()
-            .wal
+            .log
             .flush(&Namespace::new("hello"))
             .unwrap();
 

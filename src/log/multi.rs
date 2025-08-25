@@ -6,18 +6,22 @@ use parking_lot::Mutex;
 use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
 use tokio::time::Instant;
 
-use super::Wal;
+use super::single::ScopedLog;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
 use crate::data_types::message::ServerMessage;
 use crate::data_types::namespace::Namespace;
 use crate::data_types::wal::WalMessageEntry;
 
-/// A write-ahead log implementation which will handle
-/// multiple underlying [`Wal`]s at once, keyed by
-/// namespace.
+/// A multi-log which is an abstraction over numerous
+/// [`ScopedLog`] implementations.
+///
+/// Each [`ScopedLog`] is keyed by a particular [`Namespace`],
+/// handling incoming messages for that namespace. This means
+/// that messages are partitioned by the namespace they are
+/// scoped to.
 #[derive(Debug)]
-pub struct NamespaceWal {
-    namespaces: Arc<Mutex<HashMap<Namespace, Wal>>>,
+pub struct MultiLog {
+    namespaces: Arc<Mutex<HashMap<Namespace, ScopedLog>>>,
     root_directory: PathBuf,
     max_segment_size: usize,
 
@@ -33,7 +37,7 @@ pub struct NamespaceWal {
     wal_replay_duration: HistogramVec,
 }
 
-impl NamespaceWal {
+impl MultiLog {
     /// Create a new instance of [`NamespaceWal`].
     pub fn new(
         root_directory: PathBuf,
@@ -113,7 +117,7 @@ impl NamespaceWal {
             .or_insert_with(|| {
                 let dir = self.create_wal_directory(namespace);
                 self.total_namespaces.inc();
-                Wal::try_new(dir.clone(), Some(self.max_segment_size)).unwrap()
+                ScopedLog::try_new(dir.clone(), Some(self.max_segment_size)).unwrap()
             });
     }
 
@@ -141,7 +145,7 @@ impl NamespaceWal {
             Entry::Occupied(mut n) => n.get_mut().write(op.clone()).unwrap(),
             Entry::Vacant(n) => {
                 let wal_dir = self.create_wal_directory(namespace);
-                let mut wal = Wal::try_new(wal_dir, Some(self.max_segment_size)).unwrap();
+                let mut wal = ScopedLog::try_new(wal_dir, Some(self.max_segment_size)).unwrap();
                 let (sz, offset) = wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
                 n.insert(wal);
                 (sz, offset)
@@ -225,7 +229,7 @@ mod test {
     fn directory_structure() {
         let dir = TempDir::new().unwrap();
         let metrics = Registry::new();
-        let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
+        let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
         let namespace = Namespace::new("my_new_namespace");
         let wal_dir = multi.create_wal_directory(&namespace);
         assert_eq!(
@@ -239,7 +243,7 @@ mod test {
     // fn ops() {
     //     let dir = TempDir::new().unwrap();
     //     let metrics = Registry::new();
-    //     let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
+    //     let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
 
     //     multi.write(WalOperation::test_message(10)).unwrap();
     //     multi.flush(&Namespace::new("hello")).unwrap();
@@ -268,7 +272,7 @@ mod test {
     //     let dir = TempDir::new().unwrap();
     //     let metrics = Registry::new();
 
-    //     let multi = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
+    //     let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
 
     //     multi
     //         .write(WalOperation::test_message(10).with_key("foo"))
@@ -283,7 +287,7 @@ mod test {
     //     drop(multi);
 
     //     let metrics = Registry::new();
-    //     let mut same_wal = NamespaceWal::new(dir.path().to_path_buf(), None, &metrics);
+    //     let mut same_wal = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
     //     let multi = same_wal.replay();
     //     assert_eq!(multi.keys().len(), 2);
     //     assert_eq!(

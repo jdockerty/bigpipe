@@ -10,11 +10,8 @@ use std::path::PathBuf;
 
 use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
-use tracing::debug;
 
-use data_types::{
-    message::ServerMessage, namespace::Namespace, value::BigPipeValue, wal::WalMessageEntry,
-};
+use data_types::{message::ServerMessage, namespace::Namespace, wal::WalMessageEntry};
 use wal::NamespaceWal;
 
 #[derive(Debug)]
@@ -77,7 +74,7 @@ impl BigPipe {
         let namespaces = self.wal.namespaces();
         let mut messages = HashMap::with_capacity(namespaces.len());
         for namespace in &namespaces {
-            messages.insert(namespace.clone(), self.wal.read(&namespace, 0).unwrap());
+            messages.insert(namespace.clone(), self.wal.read(namespace, 0).unwrap());
         }
         messages
     }

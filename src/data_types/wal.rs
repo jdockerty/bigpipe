@@ -1,6 +1,5 @@
 use bytes::Bytes;
 
-use super::value::RetentionPolicy;
 use wal::MessageEntry as MessageEntryProto;
 use wal::SegmentEntry as SegmentEntryProto;
 

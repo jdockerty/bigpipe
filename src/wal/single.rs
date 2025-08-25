@@ -3,21 +3,18 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs::File, io::Write, path::PathBuf};
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use hashbrown::HashMap;
-use prometheus::core::AtomicI64;
 use prost::Message;
-use tonic::IntoRequest;
-use tracing::{debug, error, info, warn};
-use walkdir::{DirEntry, WalkDir};
+use tracing::{debug, info};
+use walkdir::DirEntry;
 
 use super::DEFAULT_MAX_SEGMENT_SIZE;
 use super::MAX_SEGMENT_BUFFER_SIZE;
 use super::WAL_DEFAULT_ID;
 use super::WAL_EXTENSION;
 use crate::data_types::wal::WalMessageEntry;
-use crate::data_types::wal_proto::{MessageEntry, SegmentEntry as SegmentEntryProto};
-use crate::data_types::{namespace::Namespace, value::BigPipeValue, wal::WalOperation};
+use crate::data_types::wal_proto::MessageEntry;
 use crate::ServerMessage;
 
 #[derive(Debug)]
@@ -75,6 +72,7 @@ impl Wal {
         let closed_segments = find_segment_ids(&directory);
 
         // Segments are sorted, the last element is the largest current segment.
+        #[expect(clippy::bind_instead_of_map)]
         let id = closed_segments
             .last()
             .and_then(|s| Some(s + 1))

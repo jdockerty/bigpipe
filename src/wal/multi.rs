@@ -5,15 +5,12 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
 use tokio::time::Instant;
-use walkdir::WalkDir;
 
 use super::Wal;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
 use crate::data_types::message::ServerMessage;
 use crate::data_types::namespace::Namespace;
 use crate::data_types::wal::WalMessageEntry;
-use crate::data_types::wal::WalOperation;
-use crate::BigPipeValue;
 
 /// A write-ahead log implementation which will handle
 /// multiple underlying [`Wal`]s at once, keyed by
@@ -114,7 +111,7 @@ impl NamespaceWal {
             .lock()
             .entry(namespace.clone())
             .or_insert_with(|| {
-                let dir = self.create_wal_directory(&namespace);
+                let dir = self.create_wal_directory(namespace);
                 self.total_namespaces.inc();
                 Wal::try_new(dir.clone(), Some(self.max_segment_size)).unwrap()
             });
@@ -220,8 +217,6 @@ impl NamespaceWal {
 
 #[cfg(test)]
 mod test {
-    use crate::data_types::message::ServerMessage;
-
     use super::*;
 
     use tempfile::TempDir;

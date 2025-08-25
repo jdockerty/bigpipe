@@ -19,7 +19,7 @@ use crate::{
             namespace_server::Namespace, CreateNamespaceRequest, CreateNamespaceResponse,
             UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
-        value::{BigPipeValue, RetentionPolicy},
+        value::RetentionPolicy,
     },
     BigPipe,
 };
@@ -180,13 +180,13 @@ impl Namespace for Arc<BigPipeServer> {
         request: Request<UpdateNamespaceRequest>,
     ) -> Result<Response<UpdateNamespaceResponse>, Status> {
         let UpdateNamespaceRequest {
-            key,
+            key: _,
             retention_policy,
         } = request.into_inner();
 
-        let retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
+        let _retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
 
-        unimplemented!()
+        todo!("consider if this is needed anymore")
     }
 }
 
@@ -210,7 +210,6 @@ mod test {
             namespace::Namespace,
             namespace_proto::{
                 namespace_server::Namespace as NamespaceServer, CreateNamespaceRequest,
-                UpdateNamespaceRequest, UpdateNamespaceResponse,
             },
             value::RetentionPolicy,
         },

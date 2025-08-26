@@ -17,6 +17,15 @@ use crate::data_types::wal::WalMessageEntry;
 use crate::data_types::wal_proto::MessageEntry;
 use crate::ServerMessage;
 
+/// A logical offset of an entry.
+///
+/// For example
+///
+/// my_namespace => [ messageOne, messageTwo, messageThree ]
+///
+/// The offset IDs are as follows: messageOne is at 0, messageTwo
+/// is at 1, and messageThree is at 2. Essentially, this is
+/// an array index into the message queue.
 #[derive(Debug)]
 struct OffsetId(AtomicU64);
 
@@ -34,35 +43,32 @@ impl OffsetId {
     }
 }
 
-/// A write-ahead log (WAL) implementation for a single
-/// namespace, a scoped log.
+/// A log implementation for a single namespace,
+/// a scoped log.
 ///
-/// The WAL is used to write bigpipe operations
+/// The log is used to write bigpipe operations
 /// into an append-only file for durability, before
 /// becoming available to consumers.
 #[derive(Debug)]
 pub struct ScopedLog {
+    /// The current active [`Segment`] file.
+    ///
+    /// Incoming messages are written to this file
+    /// up until reaching `segment_max_size`.
     active_segment: Segment,
+    /// The current logical offset to apply to an
+    /// incoming message.
     current_offset: OffsetId,
+    /// In-memory index for tracking logical offset
+    /// IDs to a segment and physical byte offset.
     offset_index: HashMap<u64, (SegmentId, usize)>,
+    /// Max size of a segment before it is closed
+    /// and a new segment is opened.
     segment_max_size: usize,
-    closed_segments: Vec<u64>,
+    /// Collection of closed segment IDs.
+    closed_segments: Vec<SegmentId>,
+    /// Directory configured for this [`ScopedLog`].
     directory: PathBuf,
-}
-
-fn find_segment_ids(path: impl AsRef<Path>) -> Vec<u64> {
-    let dir = walkdir::WalkDir::new(&path)
-        .max_depth(1)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().to_string_lossy().contains(WAL_EXTENSION));
-
-    let mut segment_ids: Vec<u64> = dir
-        .into_iter()
-        .map(|entry| parse_segment_id(&entry))
-        .collect();
-    segment_ids.sort();
-    segment_ids
 }
 
 impl ScopedLog {

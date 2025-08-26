@@ -66,7 +66,7 @@ enum Commands {
         #[arg(long, env = "BIGPIPE_METRICS_ADDRESS", default_value = "0.0.0.0:9090")]
         metrics_addr: String,
 
-        /// Directory where the write-ahead log (WAL) files will be written to.
+        /// Directory where the log files will be written to.
         #[arg(long, env = "BIGPIPE_WAL_DIRECTORY", default_value = default_wal_directory().into_os_string() )]
         wal_directory: PathBuf,
 

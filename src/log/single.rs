@@ -95,7 +95,7 @@ impl ScopedLog {
         })
     }
 
-    /// Write a message into the write-ahead log.
+    /// Write a message into the log.
     pub fn write(
         &mut self,
         op: WalMessageEntry,

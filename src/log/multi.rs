@@ -95,9 +95,15 @@ impl MultiLog {
 
     /// Create the WAL directory structure that will be used for the underlying
     /// [`Wal`] for a particular key, returning the associated [`PathBuf`].
+    ///
+    /// If the directory already exists, this is does nothing.
     fn create_wal_directory(&self, namespace: &Namespace) -> PathBuf {
         let wal_dir = PathBuf::from(format!("{}/{namespace}", self.root_directory.display()));
-        std::fs::create_dir(&wal_dir).unwrap();
+
+        if !wal_dir.exists() {
+            std::fs::create_dir(&wal_dir).unwrap();
+        }
+
         wal_dir
     }
 

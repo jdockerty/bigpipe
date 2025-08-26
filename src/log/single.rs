@@ -82,7 +82,7 @@ impl ScopedLog {
         #[expect(clippy::bind_instead_of_map)]
         let id = closed_segments
             .last()
-            .and_then(|s| Some(s + 1))
+            .and_then(|s| Some(s.0 + 1))
             .unwrap_or(WAL_DEFAULT_ID);
 
         Ok(Self {
@@ -173,7 +173,7 @@ impl ScopedLog {
         );
 
         // Push the previously held 'current' only once the new segment is opened
-        self.closed_segments.push(last_id.0);
+        self.closed_segments.push(last_id);
         Ok(())
     }
 
@@ -183,13 +183,13 @@ impl ScopedLog {
     }
 
     #[allow(dead_code)]
-    pub fn closed_segments(&self) -> &[u64] {
+    pub fn closed_segments(&self) -> &[SegmentId] {
         &self.closed_segments
     }
 }
 
-#[derive(Debug, Clone)]
-struct SegmentId(u64);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SegmentId(u64);
 
 #[derive(Debug)]
 struct Segment {
@@ -281,6 +281,21 @@ impl Segment {
     fn path(&self) -> &Path {
         &self.filepath
     }
+}
+
+fn find_segment_ids(path: impl AsRef<Path>) -> Vec<SegmentId> {
+    let dir = walkdir::WalkDir::new(&path)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().to_string_lossy().contains(WAL_EXTENSION));
+
+    let mut segment_ids: Vec<SegmentId> = dir
+        .into_iter()
+        .map(|entry| SegmentId(parse_segment_id(&entry)))
+        .collect();
+    segment_ids.sort();
+    segment_ids
 }
 
 fn parse_segment_id(entry: &DirEntry) -> u64 {
@@ -494,7 +509,10 @@ mod test {
             })
             .collect();
 
-        assert_eq!(find_segment_ids(dir.path()), (1..=5).collect::<Vec<_>>());
+        assert_eq!(
+            find_segment_ids(dir.path()),
+            (1..=5).map(SegmentId).collect::<Vec<_>>()
+        );
     }
 
     #[test]

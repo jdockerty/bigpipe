@@ -71,12 +71,60 @@ pub struct ScopedLog {
     directory: PathBuf,
 }
 
+/// Perform a replay of a log by iterating its contained segments.
+/// This returns the latest [`OffsetId`] and a populated offset
+/// index mapping, if observed.
+fn replay(
+    path: impl AsRef<Path>,
+    closed_segments: &[SegmentId],
+) -> (OffsetId, HashMap<u64, (SegmentId, usize)>) {
+    let mut offset_index = HashMap::new();
+    let mut latest_logical_offset = 0;
+    for segment in closed_segments {
+        let path = format!("{}/{}{WAL_EXTENSION}", path.as_ref().display(), segment.0);
+
+        let segment_file = std::fs::File::open(path).unwrap();
+        let mut reader = BufReader::new(segment_file);
+        loop {
+            let current_byte_offset = reader.stream_position().unwrap();
+
+            let mut sz = [0u8; 8]; // u64 len delimiter
+            match reader.read_exact(&mut sz) {
+                Ok(_) => {}
+                Err(_e) => break,
+            };
+
+            // Read the message bytes
+            let mut bytes = vec![0u8; u64::from_le_bytes(sz) as usize];
+            reader.read_exact(&mut bytes).unwrap();
+
+            let mut bytes = bytes::BytesMut::from(&bytes[..]);
+            let msg = MessageEntry::decode(&mut bytes)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+                .unwrap();
+
+            if msg.offset > latest_logical_offset {
+                latest_logical_offset = msg.offset;
+            }
+
+            offset_index.insert(
+                latest_logical_offset,
+                (segment.clone(), current_byte_offset as usize),
+            );
+        }
+    }
+
+    (OffsetId::new(latest_logical_offset.into()), offset_index)
+}
+
 impl ScopedLog {
     pub fn try_new(
         directory: PathBuf,
         segment_max_size: Option<usize>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let closed_segments = find_segment_ids(&directory);
+
+        let (current_offset, offset_index) = replay(&directory, &closed_segments);
 
         // Segments are sorted, the last element is the largest current segment.
         #[expect(clippy::bind_instead_of_map)]
@@ -85,9 +133,19 @@ impl ScopedLog {
             .and_then(|s| Some(s.0 + 1))
             .unwrap_or(WAL_DEFAULT_ID);
 
+        // Avoid overwrites on a populated replay by using the
+        // next value as our currently set offset.
+        //
+        // Otherwise it can be left unaltered.
+        let current_offset = if current_offset.get() != 0 {
+            current_offset.next()
+        } else {
+            current_offset
+        };
+
         Ok(Self {
-            current_offset: OffsetId::new(0),
-            offset_index: HashMap::new(),
+            current_offset,
+            offset_index,
             directory: directory.clone(),
             segment_max_size: segment_max_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             active_segment: Segment::try_new(id, directory.join(format!("{id}{WAL_EXTENSION}")))?,
@@ -315,6 +373,8 @@ fn parse_segment_id(entry: &DirEntry) -> u64 {
 mod test {
     use tempfile::TempDir;
 
+    use crate::log::single::replay;
+
     use super::*;
 
     #[test]
@@ -384,36 +444,67 @@ mod test {
         )
     }
 
-    // #[test]
-    // fn replay() {
-    //     let dir = TempDir::new().unwrap();
+    #[test]
+    fn scoped_log_replay() {
+        let dir = TempDir::new().unwrap();
 
-    //     const TINY_SEGMENT_SIZE: usize = 64;
-    //     let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
+        const TINY_SEGMENT_SIZE: usize = 64;
+        let mut log =
+            ScopedLog::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE)).unwrap();
 
-    //     for i in 0..100 {
-    //         wal.write(WalMessageEntry::test_message(i)).unwrap();
-    //         wal.active_segment.flush().unwrap();
-    //     }
-    //     wal.flush().unwrap();
+        // Capture the byte offset into write offsets.
+        //
+        // This naturally provides us with what the logical offset (array index)
+        // to byte offset would be in an easy manner.
+        let mut write_offsets = Vec::new();
+        for i in 0..100 {
+            let (_, byte_offset) = log
+                .write(WalMessageEntry::test_message(i, i as u64))
+                .unwrap();
+            log.active_segment.flush().unwrap();
 
-    //     let (last_segment_id, messages) = Wal::replay(dir.path()).unwrap();
-    //     assert_eq!(last_segment_id, 24);
-    //     assert_eq!(messages.keys().len(), 1, "Only the 'hello' key is expected");
+            write_offsets.push(byte_offset);
+        }
 
-    //     let contained_messages = messages.get(&Namespace::new("hello")).unwrap().clone();
-    //     assert_eq!(contained_messages.len(), 100);
-    //     for (i, msg) in contained_messages.into_iter().enumerate().take(100) {
-    //         assert_eq!(msg, ServerMessage::test_message(i as i64));
-    //     }
+        let closed_segments = find_segment_ids(&dir);
+        assert!(closed_segments.len() > 0);
 
-    //     assert!(
-    //         ScopedLog::try_new(dir.path().to_path_buf(), Some(TINY_SEGMENT_SIZE))
-    //             .ok()
-    //             .is_some_and(|w| w.active_segment.id() == 25),
-    //         "Segment should be +1 from last"
-    //     );
-    // }
+        let (latest_offset_id, offset_index) = replay(&dir, &closed_segments);
+        assert_eq!(latest_offset_id.get(), 99);
+        assert_eq!(offset_index.len(), 100);
+
+        let offset_zero = offset_index.get(&0).unwrap();
+        assert_eq!(offset_zero.0, SegmentId(0));
+        assert_eq!(
+            offset_zero.1, write_offsets[0],
+            "Byte offset at the offset 0 should match logical offset 0"
+        );
+        assert_eq!(
+            offset_zero.1, 0,
+            "First message should be at byte offset 0, the start of the file"
+        );
+
+        // Get a random logical offset from the index
+        let offset_twenty_one = offset_index.get(&21).unwrap();
+        assert_eq!(offset_twenty_one.0, SegmentId(7));
+        assert_eq!(
+            offset_twenty_one.1, write_offsets[21],
+            "Byte offset in the index should match for logical offset 21"
+        );
+
+        drop(log);
+
+        let log = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
+        assert_eq!(
+            log.current_offset.get(),
+            100,
+            "Last offset was 99, so to avoid overwrites this offset should be 100"
+        );
+        // Ensure that the same info is carried across dropped logs into a
+        // replay occurring.
+        assert_eq!(log.offset_index.get(&21).unwrap().0, SegmentId(7));
+        assert_eq!(log.offset_index.get(&21).unwrap().1, write_offsets[21]);
+    }
 
     #[test]
     fn closed_segments() {

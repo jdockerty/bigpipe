@@ -76,8 +76,14 @@ impl MultiLog {
             .register(Box::new(wal_replay_duration.clone()))
             .unwrap();
 
+        let namespaces = replay(
+            &root_directory,
+            max_segment_size,
+            wal_replay_duration.clone(),
+        );
+
         Self {
-            namespaces: Arc::new(Mutex::new(HashMap::with_capacity(100))),
+            namespaces: Arc::new(Mutex::new(namespaces)),
             root_directory,
             max_segment_size: max_segment_size.unwrap_or(DEFAULT_MAX_SEGMENT_SIZE),
             total_namespaces,
@@ -155,6 +161,7 @@ impl MultiLog {
                 let mut wal = ScopedLog::try_new(wal_dir, Some(self.max_segment_size)).unwrap();
                 let (sz, offset) = wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
                 n.insert(wal);
+                self.total_namespaces.inc();
                 (sz, offset)
             }
         }
@@ -178,52 +185,52 @@ impl MultiLog {
             Entry::Vacant(_) => None,
         }
     }
+}
 
-    // Replay all [`Wal`] files that are found from the given directory.
-    //
-    // This will walk the given directory, it is a expectation that
-    // sub-directories are keys for a namespace and will contain
-    // individual segment files.
-    //
-    // For example:
-    //
-    // /tmp/example-multi-wal
-    // ├── bar <-- namespace 'bar'
-    // │   └── 0-bp.wal
-    // └── foo <-- namespace 'foo'
-    //     ├── 0-bp.wal
-    //     └── 1-bp.wal
-    // pub fn replay(&mut self) -> HashMap<Namespace, BigPipeValue> {
-    //     let mut multi = HashMap::new();
-    //     for entry in WalkDir::new(&self.root_directory)
-    //         .max_depth(1) // current directory only
-    //         .into_iter()
-    //     {
-    //         let entry = entry.unwrap();
-    //         // Hack to skip over the initially passed
-    //         // directory, as this counts as an entry.
-    //         // Find a better way to do this.
-    //         if entry.depth() == 1 {
-    //             let start = Instant::now();
-    //             let (id, inner) = Wal::replay(entry.path()).expect("should exist");
-    //             self.wal_replay_duration
-    //                 .with_label_values(&["namespace"])
-    //                 .observe(start.elapsed().as_secs_f64());
-    //             let wal = Wal::try_new(entry.path().to_path_buf(), None).unwrap();
-    //             let namespace = Namespace::new(
-    //                 entry
-    //                     .path()
-    //                     .file_name()
-    //                     .expect("basename is the namespace name")
-    //                     .to_string_lossy()
-    //                     .as_ref(),
-    //             );
-    //             self.namespaces.lock().insert(namespace, wal);
-    //             multi.extend(inner);
-    //         }
-    //     }
-    //     multi
-    // }
+// Replay all [`ScopedLog`] files that are found from the given directory.
+//
+// This will walk the given directory, it is a expectation that
+// sub-directories are keys for a namespace and will contain
+// individual segment files.
+//
+// For example:
+//
+// /tmp/example-multi-wal
+// ├── bar <-- namespace 'bar'
+// │   └── 0-bp.wal
+// └── foo <-- namespace 'foo'
+//     ├── 0-bp.wal
+//     └── 1-bp.wal
+fn replay(
+    path: impl AsRef<Path>,
+    max_segment_size: Option<usize>,
+    wal_replay_duration: Histogram,
+) -> HashMap<Namespace, ScopedLog> {
+    let mut multi_log = HashMap::new();
+    for entry in WalkDir::new(&path)
+        .max_depth(1) // current directory only
+        .into_iter()
+    {
+        let entry = entry.unwrap();
+        // Hack to skip over the initially passed
+        // directory, as this counts as an entry.
+        // Find a better way to do this.
+        if entry.depth() == 1 {
+            let timer = wal_replay_duration.start_timer();
+            let log = ScopedLog::try_new(entry.path().to_path_buf(), max_segment_size).unwrap();
+            let namespace = Namespace::new(
+                entry
+                    .path()
+                    .file_name()
+                    .expect("basename is the namespace name")
+                    .to_string_lossy()
+                    .as_ref(),
+            );
+            timer.stop_and_record();
+            multi_log.insert(namespace, log);
+        }
+    }
+    multi_log
 }
 
 #[cfg(test)]
@@ -246,64 +253,43 @@ mod test {
         assert!(std::fs::exists(&wal_dir).unwrap());
     }
 
-    // #[test]
-    // fn ops() {
-    //     let dir = TempDir::new().unwrap();
-    //     let metrics = Registry::new();
-    //     let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
+    #[test]
+    fn replay() {
+        let dir = TempDir::new().unwrap();
+        let metrics = Registry::new();
 
-    //     multi.write(WalOperation::test_message(10)).unwrap();
-    //     multi.flush(&Namespace::new("hello")).unwrap();
-    //     assert_eq!(multi.total_namespaces.get(), 1);
+        let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
 
-    //     drop(multi);
+        multi
+            .write(WalMessageEntry::test_message(10, 0).with_key("foo"))
+            .unwrap();
+        multi
+            .write(WalMessageEntry::test_message(20, 1).with_key("bar"))
+            .unwrap();
 
-    //     let previous_dir = format!("{}/hello", dir.path().display());
-    //     let (_, inner) = Wal::replay(&previous_dir).unwrap();
-    //     assert_eq!(
-    //         inner
-    //             .get(&Namespace::new("hello"))
-    //             .unwrap()
-    //             .get_range(0)
-    //             .len(),
-    //         1
-    //     );
-    //     assert_eq!(
-    //         inner.get(&Namespace::new("hello")).unwrap().get_range(0),
-    //         vec![ServerMessage::new("hello".to_string(), "world".into(), 10)]
-    //     );
-    // }
+        multi.flush_all().unwrap();
+        assert_eq!(multi.total_namespaces.get(), 2);
 
-    // #[test]
-    // fn replay() {
-    //     let dir = TempDir::new().unwrap();
-    //     let metrics = Registry::new();
+        drop(multi);
 
-    //     let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
+        let metrics = Registry::new();
+        let same_wal = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
 
-    //     multi
-    //         .write(WalOperation::test_message(10).with_key("foo"))
-    //         .unwrap();
-    //     multi
-    //         .write(WalOperation::test_message(20).with_key("bar"))
-    //         .unwrap();
+        assert_eq!(same_wal.namespaces.lock().keys().len(), 2);
+        assert_eq!(
+            same_wal.wal_replay_duration.get_sample_count(),
+            2,
+            "Expected 2 replays from 2 namespaces existing"
+        );
 
-    //     multi.flush_all().unwrap();
-    //     assert_eq!(multi.total_namespaces.get(), 2);
-
-    //     drop(multi);
-
-    //     let metrics = Registry::new();
-    //     let mut same_wal = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
-    //     let multi = same_wal.replay();
-    //     assert_eq!(multi.keys().len(), 2);
-    //     assert_eq!(
-    //         multi.get(&Namespace::new("foo")).unwrap().get_range(0),
-    //         vec![ServerMessage::new("foo".to_string(), "world".into(), 10)]
-    //     );
-    //     assert_eq!(
-    //         multi.get(&Namespace::new("bar")).unwrap().get_range(0),
-    //         vec![ServerMessage::new("bar".to_string(), "world".into(), 20)]
-    //     );
-    // }
+        assert_eq!(
+            same_wal.read(&Namespace::new("foo"), 0).unwrap(),
+            vec![ServerMessage::new("foo".to_string(), "world".into(), 10)]
+        );
+        assert_eq!(
+            same_wal.read(&Namespace::new("bar"), 0).unwrap(),
+            vec![ServerMessage::new("bar".to_string(), "world".into(), 20)]
+        );
+        assert!(same_wal.read(&Namespace::new("not_exist"), 0).is_none());
+    }
 }

@@ -42,6 +42,14 @@ impl WalMessageEntry {
             offset,
         }
     }
+
+    #[cfg(test)]
+    pub fn with_key(self, key: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            ..self
+        }
+    }
 }
 
 /// An operation that can be enacted onto the WAL.

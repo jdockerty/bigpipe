@@ -114,7 +114,7 @@ fn replay(
         }
     }
 
-    (OffsetId::new(latest_logical_offset.into()), offset_index)
+    (OffsetId::new(latest_logical_offset), offset_index)
 }
 
 impl ScopedLog {
@@ -467,7 +467,7 @@ mod test {
         }
 
         let closed_segments = find_segment_ids(&dir);
-        assert!(closed_segments.len() > 0);
+        assert!(!closed_segments.is_empty());
 
         let (latest_offset_id, offset_index) = replay(&dir, &closed_segments);
         assert_eq!(latest_offset_id.get(), 99);

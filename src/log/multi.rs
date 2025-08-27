@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
-use prometheus::{Histogram, HistogramOpts, HistogramTimer, HistogramVec, IntCounter, Registry};
+use prometheus::{Histogram, HistogramOpts, HistogramVec, IntCounter, Registry};
 use tokio::time::Instant;
 use walkdir::WalkDir;
 

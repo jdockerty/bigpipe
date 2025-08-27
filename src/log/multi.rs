@@ -1,10 +1,12 @@
+use std::path::Path;
 use std::{path::PathBuf, sync::Arc};
 
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use parking_lot::Mutex;
-use prometheus::{HistogramOpts, HistogramVec, IntCounter, Registry};
+use prometheus::{Histogram, HistogramOpts, HistogramTimer, HistogramVec, IntCounter, Registry};
 use tokio::time::Instant;
+use walkdir::WalkDir;
 
 use super::single::ScopedLog;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
@@ -32,9 +34,11 @@ pub struct MultiLog {
     /// Distribution of time taken for different kinds
     /// of writes to be applied to the underlying WAL.
     wal_write_duration: HistogramVec,
-    /// Distribution of time taken for a WAL replay
-    /// to complete.
-    wal_replay_duration: HistogramVec,
+    /// Time taken for a full replay to complete.
+    ///
+    /// This involves performing individual replays
+    /// on all namespaces that are discovered.
+    wal_replay_duration: Histogram,
 }
 
 impl MultiLog {
@@ -56,13 +60,10 @@ impl MultiLog {
         )
         .unwrap();
 
-        let wal_replay_duration = HistogramVec::new(
-            HistogramOpts::new(
-                "bigpipe_wal_replay_duration_seconds",
-                "Total time taken for a WAL replay to complete",
-            ),
-            &["namespace"],
-        )
+        let wal_replay_duration = Histogram::with_opts(HistogramOpts::new(
+            "bigpipe_wal_replay_duration_seconds",
+            "Total time taken for a WAL replay to complete",
+        ))
         .unwrap();
 
         metrics

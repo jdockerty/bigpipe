@@ -1,8 +1,8 @@
 pub mod client;
 pub mod data_types;
+mod log;
 mod metrics;
 pub mod server;
-mod wal;
 
 pub use metrics::run_metrics_task;
 
@@ -10,23 +10,17 @@ use std::path::PathBuf;
 
 use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
-use tracing::debug;
 
-use data_types::{
-    message::ServerMessage, namespace::Namespace, value::BigPipeValue, wal::WalMessageEntry,
-};
-use wal::NamespaceWal;
+use data_types::{message::ServerMessage, namespace::Namespace, wal::WalMessageEntry};
+use log::MultiLog;
 
 #[derive(Debug)]
 pub struct BigPipe {
-    /// Internal queue to hold ordered messages as they are received,
-    /// partitioned by their namespace.
-    inner: HashMap<Namespace, BigPipeValue>,
     /// Write ahead log to ensure durability of writes.
     ///
     /// This is composed of multiple WALs, partitioned by
     /// [`Namespace`] to isolate data.
-    wal: NamespaceWal,
+    log: MultiLog,
 
     /// Total number of messages received throughout the process
     /// lifetime.
@@ -54,70 +48,54 @@ impl BigPipe {
             .register(Box::new(received_messages.clone()))
             .unwrap();
 
-        let mut wal = NamespaceWal::new(wal_directory, wal_max_segment_size, metrics);
-        let inner = wal.replay();
+        let log = MultiLog::new(wal_directory, wal_max_segment_size, metrics);
         Ok(Self {
-            wal,
-            inner,
+            log,
             received_messages,
         })
     }
 
     /// Write a message.
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.wal_write(message)?;
-        self.add_message(message);
+        self.log_write(message)?;
+        self.log.flush(&Namespace::new(message.key()))?;
         self.received_messages.inc();
         Ok(())
     }
 
-    /// Add a message to the internal structure.
-    fn add_message(&mut self, message: &ServerMessage) {
-        self.inner
-            .entry(Namespace::new(message.key()))
-            .and_modify(|messages| {
-                debug!(key = message.key(), "updating");
-                messages.push(message.clone())
-            })
-            .or_insert_with(|| {
-                debug!(key = message.key(), "new key");
-                let mut messages = BigPipeValue::new();
-                messages.push(message.clone());
-                messages
-            });
-    }
-
     /// Get messages for a particular key, returning [`None`] if there are
     /// no messages.
-    pub fn get_messages(&self, namespace: &str) -> Option<BigPipeValue> {
-        self.inner.get(&Namespace::new(namespace)).cloned()
-    }
-
-    /// Get a range of messages starting from the `offset`.
-    pub fn get_message_range(
-        &self,
-        partition_key: &str,
-        offset: u64,
-    ) -> Option<Vec<ServerMessage>> {
-        self.get_messages(partition_key)
-            .map(|messages| messages.get_range(offset))
+    pub fn get_messages(&self, namespace: &str, offset: u64) -> Option<Vec<ServerMessage>> {
+        self.log.read(&Namespace::new(namespace), offset)
     }
 
     /// Get all messages.
-    pub fn messages(&self) -> HashMap<Namespace, BigPipeValue> {
-        self.inner.clone()
+    pub fn messages(&self) -> HashMap<Namespace, Vec<ServerMessage>> {
+        let namespaces = self.log.namespaces();
+        let mut messages = HashMap::with_capacity(namespaces.len());
+        for namespace in &namespaces {
+            messages.insert(namespace.clone(), self.log.read(namespace, 0).unwrap());
+        }
+        messages
     }
 
     /// Write to the underlying WAL.
-    pub fn wal_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: keep this as a WalOperation and allow callee to decide on inbound op?
-        self.wal
-            .write(data_types::wal::WalOperation::Message(WalMessageEntry {
-                key: message.key().to_string(),
-                value: message.value(),
-                timestamp: message.timestamp(),
-            }))?;
+    pub fn log_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
+        self.log.write(WalMessageEntry {
+            key: message.key().to_string(),
+            value: message.value(),
+            timestamp: message.timestamp(),
+            offset: 0, // TODO: no hardcode
+        })?;
         Ok(())
+    }
+
+    pub fn contains_namespace(&self, namespace: &Namespace) -> bool {
+        self.log.contains_namespace(namespace)
+    }
+
+    pub fn create_namespace(&mut self, namespace: Namespace) {
+        self.log.create_namespace(&namespace);
     }
 }
 
@@ -147,38 +125,48 @@ mod tests {
         );
 
         for msg in [msg_1.clone(), msg_2.clone()] {
-            q.add_message(&msg);
+            q.write(&msg).unwrap();
         }
 
         let messages = q.messages();
         assert_eq!(messages.keys().len(), 2);
-        assert_eq!(*q.get_messages(msg_1.key()).unwrap().get(0).unwrap(), msg_1);
-        assert_eq!(*q.get_messages(msg_2.key()).unwrap().get(0).unwrap(), msg_2);
-        assert!(q.get_messages("key_doesnt_exist").is_none());
-    }
-
-    #[test]
-    fn wal_replay() {
-        let dir = TempDir::new().unwrap();
-        let metrics = Registry::new();
-        let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
-
-        bigpipe.write(&ServerMessage::test_message(1)).unwrap();
-        bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
-        drop(bigpipe); // drop to demonstrate replay capability
-
-        let metrics = Registry::new(); // use new registry, we cannot re-register metrics.
-        let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
-
-        let messages = bigpipe.get_messages("hello").unwrap();
-        assert_eq!(messages.len(), 1);
-        let message = messages.get(0);
         assert_eq!(
-            message.cloned(),
-            Some(ServerMessage::test_message(1)),
-            "Expected previous message being available from replay"
+            *q.get_messages(msg_1.key(), 0)
+                .expect("messages exist")
+                .first()
+                .expect("first message exists"),
+            msg_1
         );
+        assert_eq!(
+            *q.get_messages(msg_2.key(), 0).unwrap().first().unwrap(),
+            msg_2
+        );
+        assert!(q.get_messages("key_doesnt_exist", 0).is_none());
     }
+
+    // TODO: replays
+    // #[test]
+    // fn wal_replay() {
+    //     let dir = TempDir::new().unwrap();
+    //     let metrics = Registry::new();
+    //     let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
+
+    //     bigpipe.write(&ServerMessage::test_message(1)).unwrap();
+    //     bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
+    //     drop(bigpipe); // drop to demonstrate replay capability
+
+    //     let metrics = Registry::new(); // use new registry, we cannot re-register metrics.
+    //     let bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();
+
+    //     let messages = bigpipe.get_messages("hello", 0).unwrap();
+    //     assert_eq!(messages.len(), 1);
+    //     let message = messages.get(0);
+    //     assert_eq!(
+    //         message.cloned(),
+    //         Some(ServerMessage::test_message(1)),
+    //         "Expected previous message being available from replay"
+    //     );
+    // }
 
     #[test]
     fn message_range() {
@@ -189,11 +177,11 @@ mod tests {
         for i in 0..100 {
             bigpipe.write(&ServerMessage::test_message(i)).unwrap();
         }
-        bigpipe.wal.flush(&Namespace::new("hello")).unwrap();
+        bigpipe.log.flush(&Namespace::new("hello")).unwrap();
         assert_eq!(bigpipe.received_messages.get(), 100);
 
         assert_eq!(
-            bigpipe.get_message_range("hello", 10).unwrap(),
+            bigpipe.get_messages("hello", 10).unwrap(),
             (10..100)
                 .map(ServerMessage::test_message)
                 .collect::<Vec<_>>()

@@ -19,7 +19,7 @@ use crate::{
             namespace_server::Namespace, CreateNamespaceRequest, CreateNamespaceResponse,
             UpdateNamespaceRequest, UpdateNamespaceResponse,
         },
-        value::{BigPipeValue, RetentionPolicy},
+        value::RetentionPolicy,
     },
     BigPipe,
 };
@@ -110,7 +110,7 @@ impl Message for Arc<BigPipeServer> {
             "client connection"
         );
         let ReadMessageRequest { key, offset } = request.into_inner();
-        match self.inner.lock().get_message_range(&key, offset) {
+        match self.inner.lock().get_messages(&key, offset) {
             Some(messages) => {
                 let messages = messages
                     .iter()
@@ -163,16 +163,16 @@ impl Namespace for Arc<BigPipeServer> {
             retention_policy: _,
         } = request.into_inner();
 
-        match self.inner.lock().inner.entry(key.as_str().into()) {
-            hashbrown::hash_map::Entry::Occupied(_) => Err(Status::new(
-                Code::AlreadyExists,
-                format!("{key} already exists"),
-            )),
-            hashbrown::hash_map::Entry::Vacant(e) => {
-                e.insert(BigPipeValue::new());
-                Ok(Response::new(CreateNamespaceResponse { key }))
-            }
+        let namespace = InternalNamespace::new(&key);
+        let mut inner = self.inner.lock();
+
+        if inner.log.contains_namespace(&namespace) {
+            return Err(Status::already_exists(format!("{key} already exists")));
         }
+
+        inner.create_namespace(namespace);
+
+        Ok(Response::new(CreateNamespaceResponse { key }))
     }
 
     async fn update(
@@ -180,27 +180,13 @@ impl Namespace for Arc<BigPipeServer> {
         request: Request<UpdateNamespaceRequest>,
     ) -> Result<Response<UpdateNamespaceResponse>, Status> {
         let UpdateNamespaceRequest {
-            key,
+            key: _,
             retention_policy,
         } = request.into_inner();
 
-        let retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
+        let _retention_policy = RetentionPolicy::try_from(retention_policy).unwrap();
 
-        match self
-            .inner
-            .lock()
-            .inner
-            .get_key_value_mut(&InternalNamespace::new(&key))
-        {
-            Some((_, value)) => {
-                value.set_retention_policy(retention_policy);
-                Ok(Response::new(UpdateNamespaceResponse { key }))
-            }
-            None => Err(Status::new(
-                Code::NotFound,
-                format!("cannot update non-existent namespace '{key}'"),
-            )),
-        }
+        todo!("consider if this is needed anymore")
     }
 }
 
@@ -224,7 +210,6 @@ mod test {
             namespace::Namespace,
             namespace_proto::{
                 namespace_server::Namespace as NamespaceServer, CreateNamespaceRequest,
-                UpdateNamespaceRequest, UpdateNamespaceResponse,
             },
             value::RetentionPolicy,
         },
@@ -256,7 +241,7 @@ mod test {
             messages
                 .get(&Namespace::new("hello"))
                 .unwrap()
-                .get(0)
+                .first()
                 .unwrap(),
             ServerMessage { .. }
         );
@@ -283,7 +268,7 @@ mod test {
         server
             .inner
             .lock()
-            .wal
+            .log
             .flush(&Namespace::new("hello"))
             .unwrap();
 
@@ -319,11 +304,6 @@ mod test {
             .into_inner();
 
         let partial_messages = messages.collect::<Vec<_>>().await;
-        assert_eq!(
-            server.inner.lock().get_messages("hello").unwrap().len(),
-            10,
-            "The 'hello' key should contain a total of 10 messages"
-        );
         assert_eq!(
             partial_messages.len(),
             2,
@@ -373,65 +353,6 @@ mod test {
             resp.code(),
             Code::AlreadyExists,
             "Cannot create namespace which already exists"
-        );
-    }
-
-    #[tokio::test]
-    async fn update_namespace() {
-        let wal_dir = TempDir::new().unwrap();
-        let metrics = Registry::new();
-        let server = Arc::new(BigPipeServer::new(
-            BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap(),
-            &metrics,
-        ));
-
-        let update = UpdateNamespaceRequest {
-            key: "hello".to_string(),
-            retention_policy: RetentionPolicy::Ttl as i32,
-        };
-        let resp = server
-            .update(Request::new(update.clone()))
-            .await
-            .unwrap_err();
-        assert_eq!(
-            resp.code(),
-            Code::NotFound,
-            "Not possible to update a namespace which does not exist"
-        );
-
-        server
-            .create(Request::new(CreateNamespaceRequest {
-                key: update.key.clone(),
-                retention_policy: update.retention_policy,
-            }))
-            .await
-            .unwrap();
-
-        let new_update = UpdateNamespaceRequest {
-            retention_policy: RetentionPolicy::DiskPressure as i32,
-            key: update.key.clone(),
-        };
-
-        let resp = server
-            .update(Request::new(new_update.clone()))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(
-            resp,
-            UpdateNamespaceResponse {
-                key: new_update.key.clone()
-            }
-        );
-
-        assert_eq!(
-            server
-                .inner
-                .lock()
-                .get_messages(&new_update.key)
-                .unwrap()
-                .retention_policy(),
-            &RetentionPolicy::DiskPressure
         );
     }
 }

@@ -2,19 +2,10 @@ use bytes::Bytes;
 
 use log::MessageEntry as MessageEntryProto;
 
-// HACK:
-//
-// The WAL relies upon importing the RetentionPolicy proto which resides here.
-// So this must be included so that it can also find it here through
-// `super::namespace::RetentionPolicy`.
-mod namespace {
-    tonic::include_proto!("namespace");
-}
-
 // tonic requires that this is contained within a module
 // that has the same name as the proto file.
 //
-// This is renamed to NAME_proto in the `data_types` module file.
+// This is renamed to NAME_proto in the `mod.rs` file.
 #[expect(clippy::module_inception)]
 pub mod log {
     tonic::include_proto!("log");

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-use wal::MessageEntry as MessageEntryProto;
+use log::MessageEntry as MessageEntryProto;
 
 // HACK:
 //
@@ -16,8 +16,8 @@ mod namespace {
 //
 // This is renamed to NAME_proto in the `data_types` module file.
 #[expect(clippy::module_inception)]
-pub mod wal {
-    tonic::include_proto!("wal");
+pub mod log {
+    tonic::include_proto!("log");
 }
 
 /// Definition of a message entry that resides in the WAL.

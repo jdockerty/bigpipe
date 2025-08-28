@@ -10,9 +10,9 @@ use walkdir::WalkDir;
 
 use super::single::ScopedLog;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
+use crate::data_types::log::LogMessageEntry;
 use crate::data_types::message::ServerMessage;
 use crate::data_types::namespace::Namespace;
-use crate::data_types::wal::LogMessageEntry;
 
 /// A multi-log which is an abstraction over numerous
 /// [`ScopedLog`] implementations.

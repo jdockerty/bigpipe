@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 
-use data_types::{message::ServerMessage, namespace::Namespace, wal::LogMessageEntry};
+use data_types::{log::LogMessageEntry, message::ServerMessage, namespace::Namespace};
 use log::MultiLog;
 
 #[derive(Debug)]

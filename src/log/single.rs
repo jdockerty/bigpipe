@@ -13,8 +13,8 @@ use super::DEFAULT_MAX_SEGMENT_SIZE;
 use super::MAX_SEGMENT_BUFFER_SIZE;
 use super::WAL_DEFAULT_ID;
 use super::WAL_EXTENSION;
-use crate::data_types::wal::LogMessageEntry;
-use crate::data_types::wal_proto::MessageEntry;
+use crate::data_types::log::LogMessageEntry;
+use crate::data_types::log_proto::MessageEntry;
 use crate::ServerMessage;
 
 /// A logical offset of an entry.

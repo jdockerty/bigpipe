@@ -38,6 +38,7 @@ pub struct MultiLog {
     ///
     /// This involves performing individual replays
     /// on all namespaces that are discovered.
+    #[allow(dead_code)]
     wal_replay_duration: Histogram,
 }
 
@@ -96,6 +97,7 @@ impl MultiLog {
         self.namespaces.lock().keys().cloned().collect()
     }
 
+    #[allow(dead_code)]
     pub fn namespace_count(&self) -> u64 {
         self.total_namespaces.get()
     }

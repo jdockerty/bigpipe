@@ -45,6 +45,8 @@ impl From<&str> for Namespace {
     }
 }
 
+#[allow(dead_code)]
 pub struct NamespaceConfig {
+    name: Namespace,
     retention_policy: RetentionPolicy,
 }

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 
-use data_types::{message::ServerMessage, namespace::Namespace, wal::WalMessageEntry};
+use data_types::{log::LogMessageEntry, message::ServerMessage, namespace::Namespace};
 use log::MultiLog;
 
 #[derive(Debug)]
@@ -81,7 +81,7 @@ impl BigPipe {
 
     /// Write to the underlying WAL.
     pub fn log_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.log.write(WalMessageEntry {
+        self.log.write(LogMessageEntry {
             key: message.key().to_string(),
             value: message.value(),
             timestamp: message.timestamp(),

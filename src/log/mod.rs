@@ -1,6 +1,6 @@
-/// Implementation to hold multiple WAL handles across directories.
+/// Implementation to hold multiple [`ScopedLog`] handles across directories.
 mod multi;
-/// Write-ahead log implementation.
+/// A write-ahead log (WAL) implementation, that is scoped to a single namespace. A [`ScopedLog`].
 mod single;
 
 pub use multi::MultiLog;

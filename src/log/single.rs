@@ -13,8 +13,8 @@ use super::DEFAULT_MAX_SEGMENT_SIZE;
 use super::MAX_SEGMENT_BUFFER_SIZE;
 use super::WAL_DEFAULT_ID;
 use super::WAL_EXTENSION;
-use crate::data_types::wal::WalMessageEntry;
-use crate::data_types::wal_proto::MessageEntry;
+use crate::data_types::log::LogMessageEntry;
+use crate::data_types::log_proto::MessageEntry;
 use crate::ServerMessage;
 
 /// A logical offset of an entry.
@@ -156,7 +156,7 @@ impl ScopedLog {
     /// Write a message into the log.
     pub fn write(
         &mut self,
-        op: WalMessageEntry,
+        op: LogMessageEntry,
     ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         if self.active_segment.current_size >= self.segment_max_size {
             self.rotate()?;
@@ -275,7 +275,7 @@ impl Segment {
     /// and the physical byte offset message.
     fn write(
         &mut self,
-        msg: WalMessageEntry,
+        msg: LogMessageEntry,
         offset: u64,
     ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         let message = MessageEntry {
@@ -401,7 +401,7 @@ mod test {
 
         let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
 
-        wal.write(WalMessageEntry::test_message(0, 0)).unwrap();
+        wal.write(LogMessageEntry::test_message(0, 0)).unwrap();
         wal.flush().unwrap();
 
         assert!(wal.active_segment_path().exists());
@@ -420,7 +420,7 @@ mod test {
 
         let mut total = 0;
         for i in 0..=2 {
-            let (sz, _) = wal.write(WalMessageEntry::test_message(0, i)).unwrap();
+            let (sz, _) = wal.write(LogMessageEntry::test_message(0, i)).unwrap();
             total += sz;
             wal.flush().unwrap();
         }
@@ -459,7 +459,7 @@ mod test {
         let mut write_offsets = Vec::new();
         for i in 0..100 {
             let (_, byte_offset) = log
-                .write(WalMessageEntry::test_message(i, i as u64))
+                .write(LogMessageEntry::test_message(i, i as u64))
                 .unwrap();
             log.active_segment.flush().unwrap();
 
@@ -513,7 +513,7 @@ mod test {
         let mut wal = ScopedLog::try_new(dir.path().to_path_buf(), Some(64)).unwrap();
 
         for i in 0..10 {
-            wal.write(WalMessageEntry::test_message(i, i as u64))
+            wal.write(LogMessageEntry::test_message(i, i as u64))
                 .unwrap();
             wal.flush().unwrap();
             wal.rotate().unwrap();
@@ -533,9 +533,9 @@ mod test {
         let mut segment_one_size = 0;
 
         let mut s1 = Segment::try_new(1, segment_one_path.clone()).unwrap();
-        let (sz, _) = s1.write(WalMessageEntry::test_message(0, 0), 0).unwrap();
+        let (sz, _) = s1.write(LogMessageEntry::test_message(0, 0), 0).unwrap();
         segment_one_size += sz;
-        let (sz, _) = s1.write(WalMessageEntry::test_message(1, 1), 1).unwrap();
+        let (sz, _) = s1.write(LogMessageEntry::test_message(1, 1), 1).unwrap();
         segment_one_size += sz;
         s1.flush().unwrap();
 
@@ -547,7 +547,7 @@ mod test {
         let segment_two_path = dir.path().join("2.log");
         let mut segment_two_size = 0;
         let (_, mut s2) = s1.next_segment(segment_two_path.clone());
-        let (sz, _) = s2.write(WalMessageEntry::test_message(2, 2), 2).unwrap();
+        let (sz, _) = s2.write(LogMessageEntry::test_message(2, 2), 2).unwrap();
         segment_two_size += sz;
         s2.flush().unwrap();
 
@@ -573,7 +573,7 @@ mod test {
             "Logical offset should start at 0"
         );
 
-        w.write(WalMessageEntry::test_message(0, 0)).unwrap();
+        w.write(LogMessageEntry::test_message(0, 0)).unwrap();
         assert_eq!(
             w.current_offset.get(),
             1,
@@ -582,7 +582,7 @@ mod test {
 
         let mut w = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
         for i in 1..=10 {
-            w.write(WalMessageEntry::test_message(0, i)).unwrap();
+            w.write(LogMessageEntry::test_message(0, i)).unwrap();
         }
         assert_eq!(w.current_offset.get(), 10);
     }
@@ -613,7 +613,7 @@ mod test {
         let mut w = ScopedLog::try_new(dir.path().to_path_buf(), None).unwrap();
 
         let messages = (1..=10)
-            .map(|i| WalMessageEntry::test_message(i, (i - 1) as u64))
+            .map(|i| LogMessageEntry::test_message(i, (i - 1) as u64))
             .collect::<Vec<_>>();
 
         for m in messages.clone() {

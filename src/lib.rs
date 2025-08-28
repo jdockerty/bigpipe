@@ -11,14 +11,14 @@ use std::path::PathBuf;
 use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 
-use data_types::{log::LogMessageEntry, message::ServerMessage, namespace::Namespace};
+use data_types::{message::ServerMessage, namespace::Namespace};
 use log::MultiLog;
 
 #[derive(Debug)]
 pub struct BigPipe {
     /// Write ahead log to ensure durability of writes.
     ///
-    /// This is composed of multiple WALs, partitioned by
+    /// This is composed of multiple [`ScopedLog`]s, partitioned by
     /// [`Namespace`] to isolate data.
     log: MultiLog,
 
@@ -26,8 +26,7 @@ pub struct BigPipe {
     /// lifetime.
     ///
     /// A message is only considered "received" after it has
-    /// been made durable with a WAL write AND then added
-    /// to the in-memory map.
+    /// been made durable with a log.
     received_messages: IntCounter,
 }
 
@@ -79,14 +78,12 @@ impl BigPipe {
         messages
     }
 
-    /// Write to the underlying WAL.
+    /// Write to the underlying [`MultiLog`].
+    ///
+    /// The message is routed to the appropriate namespace
+    /// based on the contained key.
     pub fn log_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.log.write(LogMessageEntry {
-            key: message.key().to_string(),
-            value: message.value(),
-            timestamp: message.timestamp(),
-            offset: 0, // TODO: no hardcode
-        })?;
+        self.log.write(message)?;
         Ok(())
     }
 

@@ -10,7 +10,6 @@ use walkdir::WalkDir;
 
 use super::single::ScopedLog;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
-use crate::data_types::log::LogMessageEntry;
 use crate::data_types::message::ServerMessage;
 use crate::data_types::namespace::Namespace;
 
@@ -155,13 +154,13 @@ impl MultiLog {
     /// the internal namespace lock.
     ///
     /// When a namespace does not exist, it is eagerly created.
-    fn write_under_lock(&self, namespace: &Namespace, op: &LogMessageEntry) -> (usize, usize) {
+    fn write_under_lock(&self, namespace: &Namespace, op: &ServerMessage) -> (usize, usize) {
         match self.namespaces.lock().entry(namespace.clone()) {
-            Entry::Occupied(mut n) => n.get_mut().write(op.clone()).unwrap(),
+            Entry::Occupied(mut n) => n.get_mut().write(op).unwrap(),
             Entry::Vacant(n) => {
                 let wal_dir = self.create_wal_directory(namespace);
                 let mut wal = ScopedLog::try_new(wal_dir, Some(self.max_segment_size)).unwrap();
-                let (sz, offset) = wal.write(op.clone()).unwrap(); // Ensure that the inbound op is not lost
+                let (sz, offset) = wal.write(op).unwrap(); // Ensure that the inbound op is not lost
                 n.insert(wal);
                 self.total_namespaces.inc();
                 (sz, offset)
@@ -169,11 +168,14 @@ impl MultiLog {
         }
     }
 
-    /// Write a [`LogMessageEntry`] to the respective [`Wal`]. The key within
-    /// the operation is used as the namespace.
-    pub fn write(&self, op: LogMessageEntry) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+    /// Write a [`ServerMessage`] to the respective [`ScopedLog`].
+    /// The key within the operation is used as the namespace.
+    ///
+    /// This returns the number of bytes written and the physical byte
+    /// offset of the write.
+    pub fn write(&self, msg: &ServerMessage) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         let start = Instant::now();
-        let (sz, offset) = self.write_under_lock(&Namespace::new(&op.key), &op);
+        let (sz, offset) = self.write_under_lock(&Namespace::new(msg.key()), msg);
         self.wal_write_duration
             .with_label_values(&["message"])
             .observe(start.elapsed().as_secs_f64());
@@ -263,10 +265,10 @@ mod test {
         let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
 
         multi
-            .write(LogMessageEntry::test_message(10, 0).with_key("foo"))
+            .write(&ServerMessage::test_message(10).with_key("foo"))
             .unwrap();
         multi
-            .write(LogMessageEntry::test_message(20, 1).with_key("bar"))
+            .write(&ServerMessage::test_message(20).with_key("bar"))
             .unwrap();
 
         multi.flush_all().unwrap();

@@ -167,7 +167,7 @@ impl MultiLog {
         }
     }
 
-    /// Write a [`WalOperation`] to the respective [`Wal`]. The key within
+    /// Write a [`LogMessageEntry`] to the respective [`Wal`]. The key within
     /// the operation is used as the namespace.
     pub fn write(&self, op: LogMessageEntry) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         let start = Instant::now();

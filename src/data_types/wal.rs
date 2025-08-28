@@ -1,7 +1,6 @@
 use bytes::Bytes;
 
 use wal::MessageEntry as MessageEntryProto;
-use wal::SegmentEntry as SegmentEntryProto;
 
 // HACK:
 //
@@ -52,37 +51,6 @@ impl LogMessageEntry {
     }
 }
 
-/// An operation that can be enacted onto the WAL.
-#[derive(Debug, Clone)]
-pub enum WalOperation {
-    /// Message ingest
-    Message(LogMessageEntry),
-}
-
-impl WalOperation {
-    #[cfg(test)]
-    pub fn test_message(timestamp: i64, offset: u64) -> Self {
-        WalOperation::Message(LogMessageEntry {
-            key: "hello".to_string(),
-            value: "world".into(),
-            timestamp,
-            offset,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn with_key(self, key: &str) -> Self {
-        match self {
-            WalOperation::Message(msg) => WalOperation::Message(LogMessageEntry {
-                key: key.to_string(),
-                value: msg.value,
-                timestamp: msg.timestamp,
-                offset: msg.offset,
-            }),
-        }
-    }
-}
-
 impl TryFrom<MessageEntryProto> for LogMessageEntry {
     type Error = Box<dyn std::error::Error>;
     fn try_from(value: MessageEntryProto) -> Result<Self, Self::Error> {
@@ -92,36 +60,5 @@ impl TryFrom<MessageEntryProto> for LogMessageEntry {
             timestamp: value.timestamp,
             offset: value.offset,
         })
-    }
-}
-
-impl TryFrom<SegmentEntryProto> for WalOperation {
-    type Error = Box<dyn std::error::Error>;
-    fn try_from(value: SegmentEntryProto) -> Result<Self, Self::Error> {
-        match value.message_entry {
-            Some(message) => Ok(WalOperation::Message(LogMessageEntry {
-                key: message.key,
-                value: message.value.into(),
-                timestamp: message.timestamp,
-                offset: message.offset,
-            })),
-            None => Err("unknown variant encoded".into()),
-        }
-    }
-}
-
-impl TryFrom<WalOperation> for SegmentEntryProto {
-    type Error = Box<dyn std::error::Error>;
-    fn try_from(value: WalOperation) -> Result<Self, Self::Error> {
-        match value {
-            WalOperation::Message(message) => Ok(SegmentEntryProto {
-                message_entry: Some(wal::MessageEntry {
-                    key: message.key,
-                    value: message.value.into(),
-                    timestamp: message.timestamp,
-                    offset: message.offset,
-                }),
-            }),
-        }
     }
 }

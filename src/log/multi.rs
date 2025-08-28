@@ -12,7 +12,7 @@ use super::single::ScopedLog;
 use super::DEFAULT_MAX_SEGMENT_SIZE;
 use crate::data_types::message::ServerMessage;
 use crate::data_types::namespace::Namespace;
-use crate::data_types::wal::WalMessageEntry;
+use crate::data_types::wal::LogMessageEntry;
 
 /// A multi-log which is an abstraction over numerous
 /// [`ScopedLog`] implementations.
@@ -153,7 +153,7 @@ impl MultiLog {
     /// the internal namespace lock.
     ///
     /// When a namespace does not exist, it is eagerly created.
-    fn write_under_lock(&self, namespace: &Namespace, op: &WalMessageEntry) -> (usize, usize) {
+    fn write_under_lock(&self, namespace: &Namespace, op: &LogMessageEntry) -> (usize, usize) {
         match self.namespaces.lock().entry(namespace.clone()) {
             Entry::Occupied(mut n) => n.get_mut().write(op.clone()).unwrap(),
             Entry::Vacant(n) => {
@@ -169,7 +169,7 @@ impl MultiLog {
 
     /// Write a [`WalOperation`] to the respective [`Wal`]. The key within
     /// the operation is used as the namespace.
-    pub fn write(&self, op: WalMessageEntry) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+    pub fn write(&self, op: LogMessageEntry) -> Result<(usize, usize), Box<dyn std::error::Error>> {
         let start = Instant::now();
         let (sz, offset) = self.write_under_lock(&Namespace::new(&op.key), &op);
         self.wal_write_duration
@@ -261,10 +261,10 @@ mod test {
         let multi = MultiLog::new(dir.path().to_path_buf(), None, &metrics);
 
         multi
-            .write(WalMessageEntry::test_message(10, 0).with_key("foo"))
+            .write(LogMessageEntry::test_message(10, 0).with_key("foo"))
             .unwrap();
         multi
-            .write(WalMessageEntry::test_message(20, 1).with_key("bar"))
+            .write(LogMessageEntry::test_message(20, 1).with_key("bar"))
             .unwrap();
 
         multi.flush_all().unwrap();

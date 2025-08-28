@@ -25,14 +25,14 @@ pub mod wal {
 ///
 /// This is this crate's version of the protobuf equivalent.
 #[derive(Debug, Clone)]
-pub struct WalMessageEntry {
+pub struct LogMessageEntry {
     pub key: String,
     pub value: Bytes,
     pub timestamp: i64,
     pub offset: u64,
 }
 
-impl WalMessageEntry {
+impl LogMessageEntry {
     #[cfg(test)]
     pub fn test_message(timestamp: i64, offset: u64) -> Self {
         Self {
@@ -56,13 +56,13 @@ impl WalMessageEntry {
 #[derive(Debug, Clone)]
 pub enum WalOperation {
     /// Message ingest
-    Message(WalMessageEntry),
+    Message(LogMessageEntry),
 }
 
 impl WalOperation {
     #[cfg(test)]
     pub fn test_message(timestamp: i64, offset: u64) -> Self {
-        WalOperation::Message(WalMessageEntry {
+        WalOperation::Message(LogMessageEntry {
             key: "hello".to_string(),
             value: "world".into(),
             timestamp,
@@ -73,7 +73,7 @@ impl WalOperation {
     #[cfg(test)]
     pub fn with_key(self, key: &str) -> Self {
         match self {
-            WalOperation::Message(msg) => WalOperation::Message(WalMessageEntry {
+            WalOperation::Message(msg) => WalOperation::Message(LogMessageEntry {
                 key: key.to_string(),
                 value: msg.value,
                 timestamp: msg.timestamp,
@@ -83,10 +83,10 @@ impl WalOperation {
     }
 }
 
-impl TryFrom<MessageEntryProto> for WalMessageEntry {
+impl TryFrom<MessageEntryProto> for LogMessageEntry {
     type Error = Box<dyn std::error::Error>;
     fn try_from(value: MessageEntryProto) -> Result<Self, Self::Error> {
-        Ok(WalMessageEntry {
+        Ok(LogMessageEntry {
             key: value.key,
             value: value.value.into(),
             timestamp: value.timestamp,
@@ -99,7 +99,7 @@ impl TryFrom<SegmentEntryProto> for WalOperation {
     type Error = Box<dyn std::error::Error>;
     fn try_from(value: SegmentEntryProto) -> Result<Self, Self::Error> {
         match value.message_entry {
-            Some(message) => Ok(WalOperation::Message(WalMessageEntry {
+            Some(message) => Ok(WalOperation::Message(LogMessageEntry {
                 key: message.key,
                 value: message.value.into(),
                 timestamp: message.timestamp,

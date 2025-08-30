@@ -54,9 +54,12 @@ impl BigPipe {
         })
     }
 
-    /// Write a message.
+    /// Write to the underlying [`MultiLog`].
+    ///
+    /// The message is routed to the appropriate namespace
+    /// based on the contained key.
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.log_write(message)?;
+        self.log.write(message)?;
         self.log.flush(&Namespace::new(message.key()))?;
         self.received_messages.inc();
         Ok(())
@@ -76,15 +79,6 @@ impl BigPipe {
             messages.insert(namespace.clone(), self.log.read(namespace, 0).unwrap());
         }
         messages
-    }
-
-    /// Write to the underlying [`MultiLog`].
-    ///
-    /// The message is routed to the appropriate namespace
-    /// based on the contained key.
-    pub fn log_write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
-        self.log.write(message)?;
-        Ok(())
     }
 
     pub fn contains_namespace(&self, namespace: &Namespace) -> bool {

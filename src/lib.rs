@@ -2,6 +2,7 @@ pub mod client;
 pub mod data_types;
 mod log;
 mod metrics;
+mod retention;
 pub mod server;
 
 pub use metrics::run_metrics_task;

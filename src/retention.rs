@@ -21,9 +21,9 @@ pub struct RetentionConfig {
 impl Default for RetentionConfig {
     fn default() -> Self {
         Self {
-            max_bytes: Some(1024 * 1024 * 1024),               // 1GB default
-            max_age: Some(Duration::from_secs(7 * 24 * 3600)), // 7 days
-            check_interval: Duration::from_secs(60),           // Check every minute
+            max_bytes: Some(1024 * 1024 * 1024),             // 1GiB
+            max_age: Some(Duration::from_secs(4 * 60 * 60)), // 4 hours
+            check_interval: Duration::from_secs(60),         // Every minute
         }
     }
 }

@@ -349,7 +349,7 @@ impl Segment {
     }
 }
 
-fn find_segment_ids(path: impl AsRef<Path>) -> Vec<SegmentId> {
+pub fn find_segment_ids(path: impl AsRef<Path>) -> Vec<SegmentId> {
     let dir = walkdir::WalkDir::new(&path)
         .max_depth(1)
         .into_iter()

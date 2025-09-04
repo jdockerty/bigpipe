@@ -6,6 +6,7 @@ mod retention;
 pub mod server;
 
 pub use metrics::run_metrics_task;
+use retention::{RetentionConfig, RetentionManager};
 
 use std::path::PathBuf;
 
@@ -13,7 +14,7 @@ use hashbrown::HashMap;
 use prometheus::{IntCounter, Registry};
 
 use data_types::{message::ServerMessage, namespace::Namespace};
-use log::MultiLog;
+use log::{find_segment_ids, MultiLog};
 
 #[derive(Debug)]
 pub struct BigPipe {
@@ -22,6 +23,9 @@ pub struct BigPipe {
     /// This is composed of multiple [`ScopedLog`]s, partitioned by
     /// [`Namespace`] to isolate data.
     log: MultiLog,
+
+    /// Handle retention enforcement across numerous namespaces.
+    retention_manager: RetentionManager,
 
     /// Total number of messages received throughout the process
     /// lifetime.
@@ -49,8 +53,10 @@ impl BigPipe {
             .unwrap();
 
         let log = MultiLog::new(wal_directory, wal_max_segment_size, metrics);
+        let retention_manager = RetentionManager::new();
         Ok(Self {
             log,
+            retention_manager,
             received_messages,
         })
     }
@@ -62,6 +68,19 @@ impl BigPipe {
     pub fn write(&mut self, message: &ServerMessage) -> Result<(), Box<dyn std::error::Error>> {
         self.log.write(message)?;
         self.log.flush(&Namespace::new(message.key()))?;
+
+        if !self
+            .retention_manager
+            .contains_namespace(&Namespace::new(message.key()))
+        {
+            let namespace_path = self.log.root_directory().join(message.key());
+            self.retention_manager.add_namespace(
+                Namespace::new(message.key()),
+                namespace_path.clone(),
+                RetentionConfig::default(),
+                move || find_segment_ids(namespace_path.clone()),
+            )
+        }
         self.received_messages.inc();
         Ok(())
     }
@@ -88,6 +107,13 @@ impl BigPipe {
 
     pub fn create_namespace(&mut self, namespace: Namespace) {
         self.log.create_namespace(&namespace);
+        let path = self.log.root_directory().join(namespace.inner());
+        self.retention_manager.add_namespace(
+            namespace,
+            path.clone(),
+            RetentionConfig::default(),
+            move || find_segment_ids(path.clone()),
+        )
     }
 }
 

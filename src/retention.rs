@@ -31,7 +31,7 @@ impl Default for RetentionConfig {
 
 /// A [`RetentionEnforcer`] will enforce the disk pressure and time-to-live (TTL)
 /// policy over a namespace contained at the specified directory.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RetentionEnforcer {
     config: RetentionConfig,
     directory: PathBuf,
@@ -46,6 +46,7 @@ impl RetentionEnforcer {
     /// Returns segments that should be deleted
     pub fn evaluate(&self, segments: &[SegmentId]) -> Result<Vec<SegmentId>, std::io::Error> {
         let mut segments_to_delete = Vec::new();
+        info!(directory = %self.directory.display(), "retention evaluation");
 
         // Apply disk pressure retention if configured
         if let Some(max_bytes) = self.config.max_bytes {
@@ -155,6 +156,7 @@ impl RetentionEnforcer {
     }
 }
 
+#[derive(Debug)]
 /// Manager for retention enforcement across multiple namespaces.
 pub struct RetentionManager {
     enforcers: Arc<RwLock<HashMap<Namespace, (RetentionEnforcer, JoinHandle<()>)>>>,
@@ -168,15 +170,15 @@ impl RetentionManager {
     }
 
     /// Start retention for a new [`Namespace`].
-    pub async fn add_namespace(
+    pub fn add_namespace(
         &mut self,
         namespace: Namespace,
         log_directory: PathBuf,
         config: RetentionConfig,
+        // TODO: SegmentProvider trait to capture this behaviour?
         segment_provider: impl Fn() -> Vec<SegmentId> + Send + Sync + 'static,
     ) {
-        let directory = log_directory.join(namespace.inner());
-        let policy = RetentionEnforcer::new(directory.clone(), config.clone());
+        let policy = RetentionEnforcer::new(log_directory.clone(), config.clone());
 
         let policy_internal = policy.clone();
         let namespace_internal = namespace.clone();
@@ -231,9 +233,13 @@ impl RetentionManager {
         }
     }
 
+    pub fn contains_namespace(&self, namespace: &Namespace) -> bool {
+        self.enforcers.read().contains_key(namespace)
+    }
+
     /// Force a retention check against a namespace and specified
     /// segments.
-    pub async fn check_retention(
+    pub(crate) fn check_retention(
         &self,
         namespace: &Namespace,
         segments: &[SegmentId],
@@ -317,8 +323,8 @@ mod tests {
         assert_eq!(to_delete[0].get(), 1);
     }
 
-    #[tokio::test]
-    async fn retention_manager() {
+    #[test]
+    fn retention_manager() {
         let dir = TempDir::new().unwrap();
         let namespace = Namespace::new("test");
         let namespace_dir = dir.path().join("test");
@@ -345,10 +351,7 @@ mod tests {
             ),
         );
 
-        let to_delete = manager
-            .check_retention(&namespace, &segments)
-            .await
-            .unwrap();
+        let to_delete = manager.check_retention(&namespace, &segments).unwrap();
         assert_eq!(to_delete.len(), 1);
     }
 }

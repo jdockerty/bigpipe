@@ -6,6 +6,7 @@ use hashbrown::HashMap;
 use parking_lot::Mutex;
 use prometheus::{Histogram, HistogramOpts, HistogramVec, IntCounter, Registry};
 use tokio::time::Instant;
+use tracing::info;
 use walkdir::WalkDir;
 
 use super::single::ScopedLog;
@@ -81,6 +82,12 @@ impl MultiLog {
             max_segment_size,
             wal_replay_duration.clone(),
         );
+        total_namespaces.inc_by(namespaces.keys().len() as u64);
+
+        info!(
+            namespaces_found = total_namespaces.get(),
+            "full log replay complete"
+        );
 
         Self {
             namespaces: Arc::new(Mutex::new(namespaces)),
@@ -94,6 +101,10 @@ impl MultiLog {
 
     pub fn namespaces(&self) -> Vec<Namespace> {
         self.namespaces.lock().keys().cloned().collect()
+    }
+
+    pub fn root_directory(&self) -> &Path {
+        &self.root_directory
     }
 
     #[allow(dead_code)]
@@ -230,6 +241,7 @@ fn replay(
                     .to_string_lossy()
                     .as_ref(),
             );
+            info!(%namespace, "replaying log file");
             timer.stop_and_record();
             multi_log.insert(namespace, log);
         }

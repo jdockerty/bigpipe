@@ -1,8 +1,9 @@
 use hashbrown::HashMap;
+use parking_lot::RwLock;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::{data_types::namespace::Namespace, log::SegmentId};
@@ -28,7 +29,9 @@ impl Default for RetentionConfig {
     }
 }
 
-/// Core retention policy enforcement
+/// A [`RetentionEnforcer`] will enforce the disk pressure and time-to-live (TTL)
+/// policy over a namespace contained at the specified directory.
+#[derive(Clone)]
 pub struct RetentionEnforcer {
     config: RetentionConfig,
     directory: PathBuf,
@@ -55,11 +58,6 @@ impl RetentionEnforcer {
             let deletions = self.apply_time_retention(segments, max_age)?;
             segments_to_delete.extend(deletions);
         }
-
-        // Deduplicate
-        segments_to_delete.sort();
-        segments_to_delete.dedup();
-
         Ok(segments_to_delete)
     }
 
@@ -157,17 +155,15 @@ impl RetentionEnforcer {
     }
 }
 
-/// Manager for retention across multiple namespaces
+/// Manager for retention enforcement across multiple namespaces.
 pub struct RetentionManager {
-    policies: Arc<RwLock<HashMap<Namespace, RetentionEnforcer>>>,
-    handles: HashMap<Namespace, tokio::task::JoinHandle<()>>,
+    enforcers: Arc<RwLock<HashMap<Namespace, (RetentionEnforcer, JoinHandle<()>)>>>,
 }
 
 impl RetentionManager {
     pub fn new() -> Self {
         Self {
-            policies: Arc::new(RwLock::new(HashMap::new())),
-            handles: HashMap::new(),
+            enforcers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -182,18 +178,10 @@ impl RetentionManager {
         let directory = log_directory.join(namespace.inner());
         let policy = RetentionEnforcer::new(directory.clone(), config.clone());
 
-        self.policies
-            .write()
-            .await
-            .insert(namespace.clone(), policy);
-
-        let policies = Arc::clone(&self.policies);
-        let namespace_clone = namespace.clone();
-
-        // Spawn background task for this namespace
+        let policy_internal = policy.clone();
+        let namespace_internal = namespace.clone();
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(config.check_interval);
-
             loop {
                 interval.tick().await;
 
@@ -202,45 +190,43 @@ impl RetentionManager {
                     continue;
                 }
 
-                // Get policy and evaluate
-                let policies = policies.read().await;
-                if let Some(policy) = policies.get(&namespace_clone) {
-                    match policy.evaluate(&segments) {
-                        Ok(to_delete) => {
-                            if !to_delete.is_empty() {
-                                info!(
-                                    namespace = %namespace_clone.inner(),
-                                    count = to_delete.len(),
-                                    "Applying retention policy"
-                                );
+                match policy_internal.evaluate(&segments) {
+                    Ok(to_delete) => {
+                        if !to_delete.is_empty() {
+                            info!(
+                                namespace = %namespace_internal.clone().inner(),
+                                count = to_delete.len(),
+                                "Applying retention policy"
+                            );
 
-                                if let Err(e) = policy.delete_segments(&to_delete) {
-                                    warn!(
-                                        namespace = %namespace_clone.inner(),
-                                        error = %e,
-                                        "Failed to delete segments"
-                                    );
-                                }
+                            if let Err(e) = policy_internal.delete_segments(&to_delete) {
+                                warn!(
+                                    namespace = %namespace_internal.inner(),
+                                    error = %e,
+                                    "Failed to delete segments"
+                                );
                             }
                         }
-                        Err(e) => {
-                            warn!(
-                                namespace = %namespace_clone.inner(),
-                                error = %e,
-                                "Failed to evaluate retention policy"
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            namespace = %namespace_internal.inner(),
+                            error = %e,
+                            "Failed to evaluate retention policy"
+                        );
                     }
                 }
             }
         });
 
-        self.handles.insert(namespace, handle);
+        self.enforcers
+            .write()
+            .insert(namespace.clone(), (policy, handle));
     }
 
     /// Stop retention management for a namespace
     pub fn remove_namespace(&mut self, namespace: &Namespace) {
-        if let Some(handle) = self.handles.remove(namespace) {
+        if let Some((_, handle)) = self.enforcers.write().remove(namespace) {
             handle.abort();
         }
     }
@@ -252,9 +238,9 @@ impl RetentionManager {
         namespace: &Namespace,
         segments: &[SegmentId],
     ) -> Result<Vec<SegmentId>, std::io::Error> {
-        let policies = self.policies.read().await;
+        let policies = self.enforcers.read();
 
-        if let Some(policy) = policies.get(namespace) {
+        if let Some((policy, _)) = policies.get(namespace) {
             policy.evaluate(segments)
         } else {
             Ok(Vec::new())
@@ -351,9 +337,12 @@ mod tests {
 
         let manager = RetentionManager::new();
 
-        manager.policies.write().await.insert(
+        manager.enforcers.write().insert(
             namespace.clone(),
-            RetentionEnforcer::new(namespace_dir, config),
+            (
+                RetentionEnforcer::new(namespace_dir, config),
+                tokio::task::spawn(async move {}),
+            ),
         );
 
         let to_delete = manager

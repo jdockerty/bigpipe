@@ -79,7 +79,7 @@ impl BigPipe {
                 namespace_path.clone(),
                 RetentionConfig::default(),
                 move || find_segment_ids(namespace_path.clone()),
-            )
+            );
         }
         self.received_messages.inc();
         Ok(())
@@ -113,7 +113,7 @@ impl BigPipe {
             path.clone(),
             RetentionConfig::default(),
             move || find_segment_ids(path.clone()),
-        )
+        );
     }
 }
 
@@ -124,8 +124,8 @@ mod tests {
 
     use crate::{data_types::namespace::Namespace, BigPipe, ServerMessage};
 
-    #[test]
-    fn add_messages() {
+    #[tokio::test]
+    async fn add_messages() {
         let wal_dir = TempDir::new().unwrap();
         let metrics = Registry::new();
         let mut q = BigPipe::try_new(wal_dir.path().to_path_buf(), None, &metrics).unwrap();
@@ -186,8 +186,8 @@ mod tests {
     //     );
     // }
 
-    #[test]
-    fn message_range() {
+    #[tokio::test]
+    async fn message_range() {
         let dir = TempDir::new().unwrap();
         let metrics = Registry::new();
         let mut bigpipe = BigPipe::try_new(dir.path().to_path_buf(), None, &metrics).unwrap();

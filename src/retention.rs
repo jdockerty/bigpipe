@@ -323,8 +323,8 @@ mod tests {
         assert_eq!(to_delete[0].get(), 1);
     }
 
-    #[test]
-    fn retention_manager() {
+    #[tokio::test]
+    async fn retention_manager() {
         let dir = TempDir::new().unwrap();
         let namespace = Namespace::new("test");
         let namespace_dir = dir.path().join("test");

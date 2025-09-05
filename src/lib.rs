@@ -105,13 +105,17 @@ impl BigPipe {
         self.log.contains_namespace(namespace)
     }
 
-    pub fn create_namespace(&mut self, namespace: Namespace) {
+    pub fn create_namespace(
+        &mut self,
+        namespace: Namespace,
+        retention_config: Option<RetentionConfig>,
+    ) {
         self.log.create_namespace(&namespace);
         let path = self.log.root_directory().join(namespace.inner());
         self.retention_manager.add_namespace(
             namespace,
             path.clone(),
-            RetentionConfig::default(),
+            retention_config.unwrap_or_default(),
             move || find_segment_ids(path.clone()),
         );
     }

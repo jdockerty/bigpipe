@@ -6,9 +6,14 @@ use std::time::{Duration, SystemTime};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
+use crate::log::WAL_EXTENSION;
 use crate::{data_types::namespace::Namespace, log::SegmentId};
 
-/// Configuration for retention policies
+pub const DEFAULT_RETENTION_MAX_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB
+pub const DEFAULT_RETENTION_MAX_AGE: Duration = Duration::from_secs(4 * 60 * 60); // 4 hours
+pub const DEFAULT_RETENTION_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Configuration for retention
 #[derive(Debug, Clone)]
 pub struct RetentionConfig {
     /// Maximum total size in bytes for all segments
@@ -19,12 +24,22 @@ pub struct RetentionConfig {
     pub check_interval: Duration,
 }
 
+impl RetentionConfig {
+    pub fn new(max_bytes: u64, max_age: Duration, check_interval: Duration) -> Self {
+        Self {
+            max_bytes: Some(max_bytes),
+            max_age: Some(max_age),
+            check_interval,
+        }
+    }
+}
+
 impl Default for RetentionConfig {
     fn default() -> Self {
         Self {
-            max_bytes: Some(1024 * 1024 * 1024),             // 1GiB
-            max_age: Some(Duration::from_secs(4 * 60 * 60)), // 4 hours
-            check_interval: Duration::from_secs(60),         // Every minute
+            max_bytes: Some(DEFAULT_RETENTION_MAX_BYTES),
+            max_age: Some(DEFAULT_RETENTION_MAX_AGE),
+            check_interval: DEFAULT_RETENTION_CHECK_INTERVAL,
         }
     }
 }
@@ -152,7 +167,8 @@ impl RetentionEnforcer {
     }
 
     fn segment_path(&self, segment: &SegmentId) -> PathBuf {
-        self.directory.join(format!("{}-bp.wal", segment.get()))
+        self.directory
+            .join(format!("{}{WAL_EXTENSION}", segment.get()))
     }
 }
 

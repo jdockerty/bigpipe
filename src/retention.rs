@@ -276,6 +276,8 @@ impl RetentionManager {
 
 #[cfg(test)]
 mod tests {
+    use crate::log::find_segment_ids;
+
     use super::*;
     use std::fs::File;
     use std::io::Write;
@@ -367,11 +369,15 @@ mod tests {
             namespace.clone(),
             namespace_dir.clone(),
             config.clone(),
-            || vec![],
+            move || find_segment_ids(namespace_dir.clone()),
         );
 
-        let to_delete = manager.check_retention(&namespace, &segments).unwrap();
-        assert_eq!(to_delete.expect("contains namespace").len(), 1);
+        let to_delete = manager
+            .check_retention(&namespace, &segments)
+            .unwrap()
+            .expect("contains namespace");
+        assert_eq!(to_delete.len(), 1);
+        assert_eq!(to_delete[0], segments[0]);
         assert_eq!(manager.remove_namespace(&namespace), Some(namespace));
 
         let not_exist = manager

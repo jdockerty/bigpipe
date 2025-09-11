@@ -187,7 +187,7 @@ impl RetentionManager {
 
     /// Start retention for a new [`Namespace`].
     pub fn add_namespace(
-        &mut self,
+        &self,
         namespace: Namespace,
         log_directory: PathBuf,
         config: RetentionConfig,
@@ -242,10 +242,14 @@ impl RetentionManager {
             .insert(namespace.clone(), (policy, handle));
     }
 
-    /// Stop retention management for a namespace
-    pub fn remove_namespace(&mut self, namespace: &Namespace) {
+    /// Stop retention management for a namespace, returning the [`Namespace`] if it
+    /// has been removed from retention management.
+    pub fn remove_namespace(&self, namespace: &Namespace) -> Option<Namespace> {
         if let Some((_, handle)) = self.enforcers.write().remove(namespace) {
             handle.abort();
+            Some(namespace.clone())
+        } else {
+            None
         }
     }
 
@@ -255,17 +259,17 @@ impl RetentionManager {
 
     /// Force a retention check against a namespace and specified
     /// segments.
-    pub(crate) fn check_retention(
+    fn check_retention(
         &self,
         namespace: &Namespace,
         segments: &[SegmentId],
-    ) -> Result<Vec<SegmentId>, std::io::Error> {
+    ) -> Result<Option<Vec<SegmentId>>, std::io::Error> {
         let policies = self.enforcers.read();
 
         if let Some((policy, _)) = policies.get(namespace) {
-            policy.evaluate(segments)
+            policy.evaluate(segments).map(|s| Some(s))
         } else {
-            Ok(Vec::new())
+            Ok(None)
         }
     }
 }
@@ -359,15 +363,23 @@ mod tests {
 
         let manager = RetentionManager::new();
 
-        manager.enforcers.write().insert(
+        manager.add_namespace(
             namespace.clone(),
-            (
-                RetentionEnforcer::new(namespace_dir, config),
-                tokio::task::spawn(async move {}),
-            ),
+            namespace_dir.clone(),
+            config.clone(),
+            || vec![],
         );
 
         let to_delete = manager.check_retention(&namespace, &segments).unwrap();
-        assert_eq!(to_delete.len(), 1);
+        assert_eq!(to_delete.expect("contains namespace").len(), 1);
+        assert_eq!(manager.remove_namespace(&namespace), Some(namespace));
+
+        let not_exist = manager
+            .check_retention(&Namespace::new("not_exists"), &segments)
+            .unwrap();
+        assert!(
+            not_exist.is_none(),
+            "Should return None for non-existent namespace"
+        );
     }
 }

@@ -7,7 +7,7 @@ use axum::{
 };
 use prometheus::{Encoder, Registry, TextEncoder};
 use tokio::net::TcpListener;
-use tracing::debug;
+use tracing::{debug, info};
 
 #[derive(Clone)]
 struct HttpState {
@@ -23,6 +23,7 @@ pub async fn run_metrics_task(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let metrics_listener = TcpListener::bind(metrics_addr).await?;
     tokio::spawn(async move {
+        info!("started metrics task");
         let router = Router::new()
             .route("/metrics", get(metrics_handler))
             .with_state(HttpState { metrics });

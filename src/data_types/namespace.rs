@@ -25,6 +25,10 @@ impl Namespace {
     pub fn new(namespace: &str) -> Self {
         Self(Arc::new(namespace.to_string()))
     }
+
+    pub fn inner(&self) -> &str {
+        &self.0
+    }
 }
 
 impl Clone for Namespace {

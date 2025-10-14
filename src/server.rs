@@ -170,7 +170,7 @@ impl Namespace for Arc<BigPipeServer> {
             return Err(Status::already_exists(format!("{key} already exists")));
         }
 
-        inner.create_namespace(namespace);
+        inner.create_namespace(namespace, None);
 
         Ok(Response::new(CreateNamespaceResponse { key }))
     }

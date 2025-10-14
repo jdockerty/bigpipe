@@ -20,6 +20,7 @@ use bigpipe::{
     server::BigPipeServer,
     BigPipe,
 };
+use tracing::info;
 
 #[derive(Parser)]
 struct Cli {
@@ -133,11 +134,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             tracing_subscriber::fmt().with_max_level(verbosity).init();
             let metrics = Registry::new();
+            info!(log_directory = %wal_directory.display(), max_segment_size = wal_segment_max_size, bind_address = addr, metrics_bind_address = metrics_addr, "starting bigpipe");
             let bigpipe = BigPipe::try_new(wal_directory.clone(), wal_segment_max_size, &metrics)?;
             let bigpipe_server = Arc::new(BigPipeServer::new(bigpipe, &metrics));
 
             bigpipe::run_metrics_task(&metrics_addr, metrics).await?;
 
+            info!("started bigpipe");
             Server::builder()
                 .add_service(MessageServer::new(Arc::clone(&bigpipe_server)))
                 .add_service(NamespaceServer::new(Arc::clone(&bigpipe_server)))
